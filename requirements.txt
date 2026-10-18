@@ -1,0 +1,2 @@
+flask
+# ffmpeg/ffprobe: jellyfin-ffmpeg7 inside the Docker image (QSV needs it); not a pip package
