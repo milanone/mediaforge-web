@@ -14,6 +14,10 @@ if [ "$1" != "--force" ]; then
     fi
 fi
 
+# folder shared with the container for the in-page update button: it must exist and belong to this user
+# before Docker starts, or Docker creates it as root and the container cannot write the request file
+mkdir -p updates
+
 git pull --ff-only
 GIT_COMMIT=$(git rev-parse HEAD)
 GIT_DATE=$(git log -1 --format=%cI)

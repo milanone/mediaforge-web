@@ -783,6 +783,12 @@ LATEST_TTL = 3600       # seconds between checks when the last one worked
 LATEST_RETRY = 600      # ... and after a failure
 _latest = {"checked": 0.0, "ok": False, "data": None, "running": False}
 
+# In-page update without giving the container any power over Docker: the page only drops a request file in a
+# folder shared with the host; a script run by cron on the host (update-watcher.sh) sees it and runs deploy.sh.
+# The watcher touches "alive" every minute, so the page offers the button only when somebody is listening.
+UPDATES_DIR = Path(os.environ.get("MEDIAFORGE_UPDATES", "/data/updates"))
+WATCHER_MAX_AGE = 150   # seconds without a heartbeat before the watcher is considered gone
+
 
 def fetch_latest():
     """Latest commit of main on GitHub as {"commit", "date", "message"}; raises on any error."""
@@ -815,16 +821,62 @@ def latest_version():
     return _latest["data"]
 
 
-@app.route("/api/version")
-def version():
-    latest = latest_version()
+def updater_available() -> bool:
+    """True if the host-side watcher is alive (fresh heartbeat file)."""
+    try:
+        return time.time() - (UPDATES_DIR / "alive").stat().st_mtime < WATCHER_MAX_AGE
+    except OSError:
+        return False
+
+
+def version_payload(latest):
     known = APP_COMMIT not in ("", "unknown")
-    return jsonify({
+    status = ""
+    try:
+        status = (UPDATES_DIR / "status").read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return {
         "commit": APP_COMMIT, "short": APP_COMMIT[:7], "date": APP_COMMIT_DATE,
         "latest": latest,
         # only when this build's commit is known: a dev run must not claim to be outdated
         "update_available": bool(known and latest and latest["commit"] != APP_COMMIT),
-    })
+        "checked": bool(latest),  # False = GitHub has not answered yet (or at all)
+        "updater_available": updater_available(),
+        "update_status": status,
+    }
+
+
+@app.route("/api/version")
+def version():
+    return jsonify(version_payload(latest_version()))
+
+
+@app.route("/api/version/check", methods=["POST"])
+def version_check():
+    """"Check for updates" button: ask GitHub now (not the hourly cache), wait for the answer."""
+    try:
+        _latest["data"] = fetch_latest()
+        _latest["ok"] = True
+        error = None
+    except Exception as e:
+        _latest["ok"] = False
+        error = str(e) or e.__class__.__name__
+    _latest["checked"] = time.time()
+    payload = version_payload(_latest["data"])
+    payload["error"] = error
+    return jsonify(payload)
+
+
+@app.route("/api/update", methods=["POST"])
+def update_request():
+    """"Update now" button: leave a request for the host watcher (it runs deploy.sh, which pulls and rebuilds)."""
+    if not updater_available():
+        return jsonify({"error": "l'aggiornamento dalla pagina non e' attivo su questo server"}), 409
+    if any(j["status"] == "running" for j in jobs.values()):
+        return jsonify({"error": "c'e' una conversione in corso: aspetta che finisca"}), 409
+    (UPDATES_DIR / "request").write_text(str(int(time.time())), encoding="utf-8")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/info")

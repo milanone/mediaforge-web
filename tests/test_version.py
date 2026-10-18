@@ -87,5 +87,69 @@ class Page(unittest.TestCase):
             self.assertIn(needle, html)
 
 
+class UpdateButtons(unittest.TestCase):
+    """Forced check and the in-page update request (the host watcher itself is a shell script, not tested here)."""
+
+    def setUp(self):
+        self.client = web.app.test_client()
+        self.tmp = Path(tempfile.mkdtemp(prefix="mediaforge_updates_"))
+        self._saved = (web.APP_COMMIT, web.fetch_latest, dict(web._latest), web.UPDATES_DIR, dict(web.jobs))
+        web.UPDATES_DIR = self.tmp
+        web.APP_COMMIT = "a" * 40
+        web.jobs.clear()
+        web._latest.update(checked=time.time(), ok=True, data=None, running=False)
+
+    def tearDown(self):
+        web.APP_COMMIT, web.fetch_latest = self._saved[0], self._saved[1]
+        web._latest.update(self._saved[2])
+        web.UPDATES_DIR = self._saved[3]
+        web.jobs.clear()
+        web.jobs.update(self._saved[4])
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_check_now_bypasses_the_cache(self):
+        web.fetch_latest = lambda: LATEST
+        v = self.client.post("/api/version/check").get_json()
+        self.assertTrue(v["update_available"])
+        self.assertTrue(v["checked"])
+        self.assertIsNone(v["error"])
+
+    def test_check_now_reports_a_github_failure(self):
+        def boom():
+            raise OSError("offline")
+        web.fetch_latest = boom
+        v = self.client.post("/api/version/check").get_json()
+        self.assertFalse(v["checked"])
+        self.assertIn("offline", v["error"])
+
+    def test_update_refused_without_a_watcher(self):
+        r = self.client.post("/api/update")
+        self.assertEqual(r.status_code, 409)
+        self.assertFalse((self.tmp / "request").exists())
+
+    def test_update_writes_the_request_when_the_watcher_is_alive(self):
+        (self.tmp / "alive").write_text("")
+        self.assertTrue(self.client.get("/api/version").get_json()["updater_available"])
+        self.assertEqual(self.client.post("/api/update").status_code, 200)
+        self.assertTrue((self.tmp / "request").exists())
+
+    def test_stale_heartbeat_means_no_watcher(self):
+        alive = self.tmp / "alive"
+        alive.write_text("")
+        old = time.time() - web.WATCHER_MAX_AGE - 60
+        os.utime(alive, (old, old))
+        self.assertFalse(self.client.get("/api/version").get_json()["updater_available"])
+
+    def test_update_refused_while_a_job_runs(self):
+        (self.tmp / "alive").write_text("")
+        web.jobs["x"] = {"status": "running"}
+        self.assertEqual(self.client.post("/api/update").status_code, 409)
+        self.assertFalse((self.tmp / "request").exists())
+
+    def test_update_status_is_exposed(self):
+        (self.tmp / "status").write_text("aggiornamento in corso (10:00:00)\n", encoding="utf-8")
+        self.assertIn("in corso", self.client.get("/api/version").get_json()["update_status"])
+
+
 if __name__ == "__main__":
     unittest.main()

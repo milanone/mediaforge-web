@@ -18,7 +18,8 @@ encoding rules, different plumbing (files on the server, jobs in the background,
   (copy / SRT / none / mux afterwards), audio-only mode
 - Rate control: constant quality (CRF) or a target average bitrate, with optional 2-pass for `libx265`
 - "Ferma e tieni il file parziale": closes the running encode cleanly (ffmpeg `q`) and keeps a playable partial file
-- Version in the footer and a "new version available" banner (compares with the latest commit on GitHub)
+- Version in the footer ("aggiornata" / "nuova versione disponibile"), a "Controlla aggiornamenti" button and an
+  "Aggiorna ora" button (needs the cron watcher below; otherwise the banner shows the manual command)
 - Background jobs that survive closing the page (reattach from any browser)
 - Maintenance remux (no re-encode): fix the `hvc1` tag, fix a stale bitrate tag
 
@@ -35,7 +36,13 @@ ffmpeg comes from the `jellyfin-ffmpeg7` package installed by the `Dockerfile`.
 ## Update
 
 `./deploy.sh` in the project folder on the server pulls from GitHub and rebuilds the container (it refuses to run
-while a conversion is in progress).
+while a conversion is in progress). For the in-page "Aggiorna ora" button, add to the server's crontab:
+
+```
+* * * * * /path/to/mediaforge-web/update-watcher.sh
+```
+
+The container has no access to Docker: the page only leaves a request file that this script picks up.
 
 ## Limits
 

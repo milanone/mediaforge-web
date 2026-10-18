@@ -17,6 +17,7 @@ services:
       - /home/francesco/hdd-live:/library/hdd-live
       - /home/francesco/mediaforge-library:/library/gaia
       - ./data/uploads:/data/uploads
+      - ./updates:/data/updates
       - /home/francesco/hdd-live/francesco/mediaforge-output:/data/output
     devices:
       - /dev/dri:/dev/dri

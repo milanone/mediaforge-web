@@ -110,7 +110,17 @@
     position: absolute; top: 6px; right: 8px; background: none; border: none;
     color: var(--muted); cursor: pointer; font-size: 1rem;
   }
+  .update-banner .btn-update {
+    position: static; background: var(--accent); color: #fff; border-radius: 6px; padding: 5px 12px;
+    font-size: 0.85rem; margin-right: 8px;
+  }
   .footer { color: var(--muted); font-size: 0.75rem; text-align: center; margin-top: 24px; }
+  .footer button {
+    background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px;
+    padding: 2px 10px; font-size: 0.75rem; cursor: pointer; margin-left: 8px;
+  }
+  .footer .uptodate { color: var(--ok); }
+  .footer .outdated { color: var(--accent); font-weight: 600; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -121,7 +131,9 @@
   <div class="update-banner" id="updateBanner" hidden>
     <button type="button" title="Nascondi fino alla prossima versione" onclick="dismissUpdate()">×</button>
     <strong>Nuova versione disponibile</strong> <span id="updateInfo"></span><br>
-    Per aggiornare, su gaia: <code>cd /home/francesco/docker/mediaforge-web &amp;&amp; ./deploy.sh</code>
+    <button type="button" class="btn-update" id="updateNowBtn" onclick="updateNow()" hidden>Aggiorna ora</button>
+    <span id="updateManual">Per aggiornare, su gaia: <code>cd /home/francesco/docker/mediaforge-web &amp;&amp; ./deploy.sh</code></span>
+    <div id="updateProgress" style="margin-top:4px" hidden></div>
     <div id="updateBusy" style="color:var(--err); margin-top:4px" hidden>
       Attenzione: c'è una conversione in corso, l'aggiornamento la interromperebbe.
     </div>
@@ -342,7 +354,10 @@
       </button>
     </div>
   </div>
-  <div class="footer" id="versionInfo"></div>
+  <div class="footer">
+    <span id="versionInfo"></span> · <span id="versionStatus"></span>
+    <button type="button" id="checkUpdateBtn" onclick="checkUpdates()">Controlla aggiornamenti</button>
+  </div>
 </div>
 
 <script>
@@ -981,23 +996,75 @@ function dismissUpdate() {
   try { localStorage.setItem('dismissedUpdate', latestSeen || ''); } catch (e) {}
   document.getElementById('updateBanner').hidden = true;
 }
-fetch('/api/version').then(r => r.json()).then(async v => {
+
+async function renderVersion(v, forceBanner) {
   const when = v.date ? new Date(v.date).toLocaleDateString('it-IT') : '';
   document.getElementById('versionInfo').textContent =
     v.commit === 'unknown' ? 'versione non nota (avvio di sviluppo)' : `versione ${v.short}${when ? ' del ' + when : ''}`;
-  if (!v.update_available) return;
+  const st = document.getElementById('versionStatus');
+  if (v.commit === 'unknown') { st.textContent = ''; }
+  else if (!v.checked) { st.textContent = 'aggiornamento non ancora verificato'; st.className = ''; }
+  else if (v.update_available) { st.textContent = 'nuova versione disponibile'; st.className = 'outdated'; }
+  else { st.textContent = 'aggiornata ✓'; st.className = 'uptodate'; }
+  if (!v.update_available) { document.getElementById('updateBanner').hidden = true; return; }
   latestSeen = v.latest.commit;
   let dismissed = '';
   try { dismissed = localStorage.getItem('dismissedUpdate') || ''; } catch (e) {}
-  if (dismissed === latestSeen) return;
+  if (dismissed === latestSeen && !forceBanner) return;
   const lw = new Date(v.latest.date).toLocaleDateString('it-IT');
   document.getElementById('updateInfo').textContent = `(${v.latest.commit.slice(0, 7)}, ${lw}: ${v.latest.message})`;
+  document.getElementById('updateNowBtn').hidden = !v.updater_available;
+  document.getElementById('updateManual').hidden = v.updater_available;
   try {
     const jobs = await (await fetch('/api/jobs')).json();
     document.getElementById('updateBusy').hidden = !jobs.length;
   } catch (e) {}
   document.getElementById('updateBanner').hidden = false;
-}).catch(() => {});
+}
+
+function loadVersion() {
+  return fetch('/api/version').then(r => r.json()).then(v => renderVersion(v, false)).catch(() => {});
+}
+
+// "Controlla aggiornamenti": ask GitHub right now instead of waiting for the hourly check
+async function checkUpdates() {
+  const btn = document.getElementById('checkUpdateBtn'), st = document.getElementById('versionStatus');
+  btn.disabled = true; btn.textContent = 'Controllo…';
+  try {
+    const v = await (await fetch('/api/version/check', { method: 'POST' })).json();
+    if (v.error && !v.checked) { st.textContent = 'GitHub non raggiungibile, riprova più tardi'; st.className = ''; }
+    else await renderVersion(v, true);
+  } catch (e) {
+    st.textContent = 'controllo non riuscito'; st.className = '';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Controlla aggiornamenti';
+  }
+}
+
+// "Aggiorna ora": the host watcher runs deploy.sh (pull + rebuild); the page waits for the new version and reloads
+async function updateNow() {
+  if (!confirm("L'aggiornamento riavvia il servizio (circa un minuto). Procedere?")) return;
+  const prog = document.getElementById('updateProgress');
+  prog.hidden = false; prog.textContent = 'Richiesta inviata, parte entro un minuto…';
+  document.getElementById('updateNowBtn').disabled = true;
+  try {
+    const r = await fetch('/api/update', { method: 'POST' });
+    const d = await r.json();
+    if (d.error) { prog.textContent = 'Errore: ' + d.error; document.getElementById('updateNowBtn').disabled = false; return; }
+  } catch (e) { prog.textContent = 'Richiesta non riuscita.'; document.getElementById('updateNowBtn').disabled = false; return; }
+  const startCommit = (await (await fetch('/api/version')).json()).commit;
+  const t0 = Date.now();
+  const timer = setInterval(async () => {
+    try {
+      const v = await (await fetch('/api/version')).json();
+      if (v.commit !== startCommit) { clearInterval(timer); prog.textContent = 'Aggiornato, ricarico…'; setTimeout(() => location.reload(), 800); return; }
+      if (v.update_status) prog.textContent = 'Stato: ' + v.update_status;
+    } catch (e) { prog.textContent = 'Il servizio si sta riavviando…'; }
+    if (Date.now() - t0 > 5 * 60 * 1000) { clearInterval(timer); prog.textContent = "L'aggiornamento non risulta completato: controlla su gaia."; }
+  }, 5000);
+}
+
+loadVersion();
 
 loadEncoders();
 loadDir("");

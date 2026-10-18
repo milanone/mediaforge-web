@@ -27,6 +27,14 @@ overrides), pulls, and rebuilds with the commit as build argument: the page foot
 background, failures are silent) to show a "nuova versione disponibile" banner. A build without the commit
 (`docker compose up` by hand, a local run) shows "versione non nota" and never claims to be outdated.
 
+In-page buttons: the footer says "aggiornata" / "nuova versione disponibile" and has "Controlla aggiornamenti" (asks
+GitHub now, `/api/version/check`). The banner has "Aggiorna ora" only when the host watcher is alive: the container
+has no Docker access, so `/api/update` just writes `updates/request` (folder `./updates` shared with the host) and
+`update-watcher.sh`, run every minute by cron on gaia, runs `deploy.sh` and writes `updates/status`; it also touches
+`updates/alive`, which is how the page knows the button can work. Cron line (installed by hand, with the user's OK):
+`* * * * * /home/francesco/docker/mediaforge-web/update-watcher.sh`. The endpoint is unauthenticated like the rest
+of the app: it can only trigger an update to what is on GitHub `main`, and it refuses while a conversion runs.
+
 Safer first time for a big change: build a copy as `mediaforge-web:test` on port 5051 with its own library folder,
 try it, then deploy. Rollback: `docker tag mediaforge-web:backup-20261018 mediaforge-web:local && docker compose up -d`
 in that folder (that tag and `/home/francesco/docker/mediaforge-web.bak-20261018` hold the pre-clone version).
