@@ -16,6 +16,8 @@ encoding rules, different plumbing (files on the server, jobs in the background,
 - "Verifica FPS originali": counts the real (non-duplicated) frames on 5 short clips and sets the FPS accordingly
 - Resolution cap, aspect ratio (crop / pad / DAR tag / stretch), flip, trim, audio re-encode or copy, subtitles
   (copy / SRT / none / mux afterwards), audio-only mode
+- Rate control: constant quality (CRF) or a target average bitrate, with optional 2-pass for `libx265`
+- "Ferma e tieni il file parziale": closes the running encode cleanly (ffmpeg `q`) and keeps a playable partial file
 - Background jobs that survive closing the page (reattach from any browser)
 - Maintenance remux (no re-encode): fix the `hvc1` tag, fix a stale bitrate tag
 
@@ -33,7 +35,8 @@ ffmpeg comes from the `jellyfin-ffmpeg7` package installed by the `Dockerfile`.
 
 - Only tested on an Intel N150 (QuickSync) with the Jellyfin ffmpeg build; AMD/NVIDIA are not supported here
 - No authentication: expose it only on a trusted network
-- Not yet in the repo: target-bitrate mode, 2-pass, "stop and keep the partial file" (these exist in the desktop app)
+- Target bitrate, 2-pass and the clean stop were added on 2026-10-18 and tested with `libx265` on Windows only;
+  not yet verified with QSV on the server
 
 ## License
 

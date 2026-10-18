@@ -194,6 +194,20 @@
         </div>
       </div>
       <div class="field">
+        <label>Controllo del bitrate</label>
+        <select id="rateMode" onchange="onRateModeChange()">
+          <option value="crf">Qualità costante (CRF)</option>
+          <option value="bitrate">Bitrate target (medio, un solo passaggio)</option>
+        </select>
+        <div id="bitrateBox" hidden style="margin-top:6px">
+          <input type="number" id="bitrateKbps" min="100" max="100000" step="100" value="2000"
+                 style="width:110px" oninput="schedulePreview()"> kb/s
+          <label id="twoPassLabel" style="display:inline-block; margin-left:12px">
+            <input type="checkbox" id="twoPass" onchange="schedulePreview()"> 2 passate (solo libx265, circa il doppio del tempo)
+          </label>
+        </div>
+      </div>
+      <div class="field">
         <label>Risoluzione massima</label>
         <select id="resCap" onchange="schedulePreview()">
           <option value="">Originale</option>
@@ -290,6 +304,7 @@
       <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
       <div class="progress-label" id="progressLabel">In corso...</div>
       <button class="primary" id="stopBtn" style="background:var(--err); display:none" onclick="stopEncode()">Interrompi</button>
+      <button class="primary" id="finishBtn" style="background:var(--muted); display:none; margin-top:6px" onclick="finishEncode()">Ferma e tieni il file parziale</button>
       <div class="log" id="log"></div>
     </div>
 
@@ -370,7 +385,7 @@ async function loadEncoders() {
     opt.value = e.value; opt.textContent = e.label;
     sel.appendChild(opt);
   });
-  sel.onchange = () => { buildPresetOptions(); updateQualityAuto(); schedulePreview(); };
+  sel.onchange = () => { buildPresetOptions(); updateQualityAuto(); updateTwoPassVisibility(); schedulePreview(); };
 
   allPresets = data.presets;
   buildPresetOptions();
@@ -717,6 +732,11 @@ function collectOpts() {
     audio_index: audioIndices[0] || 0,
     codec: document.getElementById('codec').value,
     quality: parseInt(document.getElementById('quality').value),
+    bitrate_kbps: document.getElementById('rateMode').value === 'bitrate'
+      ? (parseInt(document.getElementById('bitrateKbps').value) || null) : null,
+    two_pass: document.getElementById('rateMode').value === 'bitrate'
+      && document.getElementById('codec').value === 'libx265'
+      && document.getElementById('twoPass').checked,
     look_ahead: document.getElementById('lookAhead').checked,
     resolution_cap: document.getElementById('resCap').value ? parseInt(document.getElementById('resCap').value) : null,
     fps: document.getElementById('fps').value || null,
@@ -818,8 +838,7 @@ function runJob(opts) {
   document.getElementById('log').textContent = '';
   currentJobId = null;
   const stopBtn = document.getElementById('stopBtn');
-  stopBtn.style.display = 'block';
-  stopBtn.disabled = false;
+  showStop(true);
 
   fetch('/api/encode', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -829,12 +848,46 @@ function runJob(opts) {
       document.getElementById('statusMsg').textContent = data.error;
       document.getElementById('statusMsg').className = 'status-msg err';
       document.getElementById('encodeBtn').disabled = false;
-      stopBtn.style.display = 'none';
+      showStop(false);
       return;
     }
     currentJobId = data.job_id;
     pollStatus(data.job_id);
   });
+}
+
+function onRateModeChange() {
+  const byBitrate = document.getElementById('rateMode').value === 'bitrate';
+  document.getElementById('bitrateBox').hidden = !byBitrate;
+  document.getElementById('quality').disabled = byBitrate;
+  updateTwoPassVisibility();
+  schedulePreview();
+}
+
+// 2-pass exists only for the software encoder
+function updateTwoPassVisibility() {
+  const sw = document.getElementById('codec').value === 'libx265';
+  document.getElementById('twoPassLabel').style.display = sw ? 'inline-block' : 'none';
+}
+
+function showStop(visible) {
+  const stopBtn = document.getElementById('stopBtn'), finishBtn = document.getElementById('finishBtn');
+  stopBtn.style.display = visible ? 'block' : 'none';
+  finishBtn.style.display = visible ? 'block' : 'none';
+  stopBtn.disabled = false;
+  finishBtn.disabled = false;
+}
+
+// Clean stop: ffmpeg closes the file properly and the partial result is kept (playable)
+function finishEncode() {
+  if (!currentJobId) return;
+  const finishBtn = document.getElementById('finishBtn');
+  finishBtn.disabled = true;
+  fetch('/api/finish/' + currentJobId, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) finishBtn.disabled = false;
+    });
 }
 
 function stopEncode() {
@@ -859,7 +912,7 @@ function pollStatus(jobId) {
 
     if (data.status === 'done') {
       clearInterval(pollTimer);
-      let msg = 'Conversione completata.';
+      let msg = data.partial ? 'Conversione fermata su richiesta: file parziale conservato.' : 'Conversione completata.';
       if (data.output_bitrate) msg += ` Bitrate output: ${Math.round(data.output_bitrate/1000)} kb/s.`;
       if (data.output_size) msg += ` Dimensione: ${fmtBytes(data.output_size)}.`;
       document.getElementById('statusMsg').textContent = msg;
@@ -871,19 +924,19 @@ function pollStatus(jobId) {
       outPreview.src = '/api/play/' + jobId;
       outPreview.hidden = false;
       document.getElementById('encodeBtn').disabled = false;
-      document.getElementById('stopBtn').style.display = 'none';
+      showStop(false);
     } else if (data.status === 'error') {
       clearInterval(pollTimer);
       document.getElementById('statusMsg').textContent = 'Errore durante la conversione, controlla il log.';
       document.getElementById('statusMsg').className = 'status-msg err';
       document.getElementById('encodeBtn').disabled = false;
-      document.getElementById('stopBtn').style.display = 'none';
+      showStop(false);
     } else if (data.status === 'cancelled') {
       clearInterval(pollTimer);
       document.getElementById('statusMsg').textContent = 'Conversione interrotta.';
       document.getElementById('statusMsg').className = 'status-msg err';
       document.getElementById('encodeBtn').disabled = false;
-      document.getElementById('stopBtn').style.display = 'none';
+      showStop(false);
     }
   }, 1500);
 }
@@ -899,9 +952,7 @@ fetch('/api/jobs').then(r => r.json()).then(list => {
   document.getElementById('statusMsg').textContent = 'Conversione in corso: ' + j.src + ' → ' + j.out_name +
     (list.length > 1 ? ` (+${list.length - 1} altre)` : '');
   document.getElementById('statusMsg').className = 'status-msg';
-  const stopBtn = document.getElementById('stopBtn');
-  stopBtn.style.display = 'block';
-  stopBtn.disabled = false;
+  showStop(true);
   pollStatus(j.job_id);
 }).catch(() => {});
 

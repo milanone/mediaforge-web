@@ -2,7 +2,9 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -392,16 +394,23 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
     codec = opts.get("codec", "hevc_qsv")
     quality = str(opts.get("quality", 23))
     preset = opts.get("preset") if opts.get("preset") in PRESETS else None
+    # Target average bitrate (single-pass VBR) instead of constant quality when
+    # opts["bitrate_kbps"] is set; same behaviour as the desktop app.
+    bitrate = opts.get("bitrate_kbps")
+    rate = ["-b:v", f"{int(bitrate)}k"] if bitrate else None
     if codec in ("hevc_qsv", "h264_qsv"):
-        cmd += ["-c:v", codec, "-global_quality", quality]
+        cmd += ["-c:v", codec] + (rate or ["-global_quality", quality])
         if preset:
             cmd += ["-preset", preset]
         if opts.get("look_ahead", True):
             cmd += ["-look_ahead", "1"]
     elif codec == "libx265":
-        cmd += ["-c:v", "libx265", "-crf", quality, "-preset", preset or "medium"]
+        cmd += ["-c:v", "libx265"] + (rate or ["-crf", quality]) + ["-preset", preset or "medium"]
     else:
-        cmd += ["-c:v", codec, "-global_quality", quality]
+        cmd += ["-c:v", codec] + (rate or ["-global_quality", quality])
+    if opts.get("pass_num"):
+        # 2-pass (libx265 only, see run_encode): same command for both passes
+        cmd += ["-pass", str(opts["pass_num"]), "-passlogfile", str(opts["passlog"])]
 
     # Tag hvc1 = compatibilita Apple/QuickTime per HEVC dentro un contenitore mp4
     if codec in ("hevc_qsv",) and dst.suffix.lower() == ".mp4":
@@ -418,7 +427,8 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
     # ratio, fps, flip, poi l'audio piu' sotto): utile per ricordarsi in
     # futuro come e' stato prodotto il file senza doverlo ririlevare da
     # MediaInfo. Stessa idea della versione desktop (github.com/milanone/MediaForge).
-    nota_codifica = [f"{codec} CRF={quality}"]
+    nota_codifica = [f"{codec} " + (f"bitrate={int(bitrate)}k" + (" 2-pass" if opts.get("pass_num") else "")
+                                    if bitrate else f"CRF={quality}")]
     if opts.get("look_ahead", True) and codec not in ("libx265",):
         nota_codifica.append("look-ahead")
     if opts.get("resolution_cap"):
@@ -458,7 +468,11 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
             cmd += ["-c:s", "copy"]
 
     cmd += ["-map_metadata", "0"]
-    cmd += [str(dst)]
+    if opts.get("pass_num") == 1:
+        # pass 1: analysis only, nothing is written (audio and subtitles are not needed)
+        cmd += ["-an", "-sn", "-f", "null", os.devnull]
+    else:
+        cmd += [str(dst)]
     return cmd
 
 
@@ -532,10 +546,14 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
     La lettura di stderr avviene in un thread separato: leggerla riga per
     riga in questo stesso ciclo bloccherebbe il controllo periodico dello
     stallo proprio nel caso che deve rilevare, quello in cui non arriva piu'
-    nessuna riga. Ritorna "ok"/"cancelled"/"stalled"/"error"."""
+    nessuna riga. Ritorna "ok"/"cancelled"/"stalled"/"error"/"finished".
+    "finished" = chiusura pulita su richiesta (job["finish_requested"], vedi
+    /api/finish): si manda "q" a ffmpeg, che finisce i fotogrammi in coda e
+    scrive la chiusura del contenitore, cosi' il file parziale e' riproducibile
+    (come "Stop and keep file" della versione desktop). stdin e' quindi una pipe."""
     proc = subprocess.Popen(
         cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        text=True, stdin=subprocess.DEVNULL,
+        text=True, stdin=subprocess.PIPE,
     )
     job["proc"] = proc
 
@@ -551,7 +569,22 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
     last_progress = time.monotonic()
     last_time_val = None
     outcome = "ok"
+    finish_sent = None  # instant "q" was sent
     while True:
+        if job.get("finish_requested") and finish_sent is None and not job.get("cancel_requested"):
+            try:
+                proc.stdin.write("q")
+                proc.stdin.flush()
+            except OSError:
+                pass
+            finish_sent = time.monotonic()
+            outcome = "finished"
+            job["log"].append("Chiusura pulita del file in corso...")
+        if finish_sent is not None and time.monotonic() - finish_sent > 30:
+            # ffmpeg did not close within 30 s: the file cannot be trusted
+            proc.terminate()
+            outcome = "cancelled"
+            break
         if job.get("cancel_requested"):
             proc.terminate()
             outcome = "cancelled"
@@ -560,7 +593,7 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
         # stallo reale puo' comunque continuare a produrre un flusso fitto di
         # righe non di progresso, quindi il timeout della get() da solo non
         # basterebbe a rilevarlo.
-        if time.monotonic() - last_progress > STALL_TIMEOUT:
+        if finish_sent is None and time.monotonic() - last_progress > STALL_TIMEOUT:
             proc.terminate()
             outcome = "stalled"
             break
@@ -584,6 +617,8 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
         job["log"] = job["log"][-300:]
 
     proc.wait()
+    if outcome == "finished" and proc.returncode not in (0, 255):
+        outcome = "error"
     if outcome == "ok" and proc.returncode != 0:
         outcome = "error"
     return outcome
@@ -607,6 +642,29 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
     defer_subs = can_defer_subs and subs_mode == "mux"
     retried_for_stall = False
     use_hw = True
+
+    # 2-pass: only libx265 (QSV has no 2nd pass), only with a target bitrate. Pass 1 is analysis
+    # (no output, subtitles excluded); pass 2 then runs through the normal loop below.
+    pass_dir = None
+    if (opts.get("two_pass") and opts.get("bitrate_kbps") and opts.get("codec") == "libx265"
+            and can_defer_subs):
+        pass_dir = Path(tempfile.mkdtemp(prefix="mediaforge_pass_"))
+        opts = dict(opts, passlog=str(pass_dir / "pass"))
+        cmd1 = build_cmd(src_path, dst_path, dict(opts, pass_num=1, subs_mode="no"), probe, hw=False)
+        job["log"].append("Passata 1/2 (analisi)")
+        job["cmd"] = " ".join(cmd1)
+        outcome1 = run_ffmpeg_watchdog(cmd1, job, duration)
+        if outcome1 in ("cancelled", "finished"):
+            job["status"] = "cancelled"
+            shutil.rmtree(pass_dir, ignore_errors=True)
+            return
+        if outcome1 != "ok":
+            job["status"] = "error"
+            shutil.rmtree(pass_dir, ignore_errors=True)
+            return
+        job["log"].append("Passata 2/2 (codifica)")
+        job["progress"] = 0
+        opts = dict(opts, pass_num=2)
 
     try:
         while True:
@@ -655,8 +713,12 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
                 dst_attempt.unlink(missing_ok=True)
                 return
 
-            # outcome == "ok"
-            if defer_subs:
+            # outcome == "ok" or "finished" (clean stop on request: keep the partial file)
+            partial = outcome == "finished"
+            if partial and defer_subs:
+                job["log"].append("Sottotitoli non aggiunti al file parziale.")
+                os.replace(dst_attempt, dst_path)
+            if defer_subs and not partial:
                 warnings = []
                 postmux_cmd = build_postmux_subs_cmd(dst_attempt, src_path, probe, opts, dst_path, warnings)
                 for w in warnings:
@@ -679,7 +741,11 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
 
             if dst_path.exists():
                 job["status"] = "done"
-                job["progress"] = 100
+                if partial:
+                    job["partial"] = True
+                    job["log"].append("Fermata su richiesta: file parziale conservato.")
+                else:
+                    job["progress"] = 100
                 out_duration = float(ffprobe_json(dst_path).get("format", {}).get("duration") or 0) or duration
                 job["output_bitrate"] = real_video_bitrate(dst_path, out_duration)
                 job["output_size"] = dst_path.stat().st_size
@@ -689,6 +755,9 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
     except Exception as e:
         job["status"] = "error"
         job["log"].append(str(e))
+    finally:
+        if pass_dir:
+            shutil.rmtree(pass_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1005,6 +1074,7 @@ def status(job_id):
         "log": job["log"][-50:],
         "output_bitrate": job.get("output_bitrate"),
         "output_size": job.get("output_size"),
+        "partial": bool(job.get("partial")),
     })
 
 
@@ -1032,6 +1102,18 @@ def stop_job(job_id):
                 pass
 
     threading.Thread(target=_escalate, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/finish/<job_id>", methods=["POST"])
+def finish_job(job_id):
+    """Clean stop that keeps the partial output (see run_ffmpeg_watchdog, "finished")."""
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "not found"}), 404
+    if not job.get("proc") or job["status"] != "running":
+        return jsonify({"error": "il job non e' in esecuzione"}), 400
+    job["finish_requested"] = True
     return jsonify({"ok": True})
 
 
