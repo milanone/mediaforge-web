@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -767,6 +768,63 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+# ---------------------------------------------------------------------------
+# Version and "new version available"
+# ---------------------------------------------------------------------------
+# The commit this image was built from is passed as a build argument (see Dockerfile and deploy.sh).
+# The latest commit of main is asked to GitHub at most once an hour, in a background thread, and a
+# failure (offline, rate limit) just means "no information": it never breaks the page.
+REPO = "milanone/mediaforge-web"
+APP_COMMIT = os.environ.get("MEDIAFORGE_COMMIT", "unknown")
+APP_COMMIT_DATE = os.environ.get("MEDIAFORGE_COMMIT_DATE", "")
+LATEST_TTL = 3600       # seconds between checks when the last one worked
+LATEST_RETRY = 600      # ... and after a failure
+_latest = {"checked": 0.0, "ok": False, "data": None, "running": False}
+
+
+def fetch_latest():
+    """Latest commit of main on GitHub as {"commit", "date", "message"}; raises on any error."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/commits/main",
+        headers={"User-Agent": "mediaforge-web", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=5) as r:
+        d = json.loads(r.read().decode("utf-8"))
+    return {"commit": d["sha"], "date": d["commit"]["committer"]["date"],
+            "message": d["commit"]["message"].splitlines()[0]}
+
+
+def _refresh_latest():
+    try:
+        _latest["data"] = fetch_latest()
+        _latest["ok"] = True
+    except Exception:
+        _latest["ok"] = False
+    finally:
+        _latest["checked"] = time.time()
+        _latest["running"] = False
+
+
+def latest_version():
+    """Cached latest commit (or None); starts a refresh in the background when the cache is old."""
+    ttl = LATEST_TTL if _latest["ok"] else LATEST_RETRY
+    if time.time() - _latest["checked"] > ttl and not _latest["running"]:
+        _latest["running"] = True
+        threading.Thread(target=_refresh_latest, daemon=True).start()
+    return _latest["data"]
+
+
+@app.route("/api/version")
+def version():
+    latest = latest_version()
+    known = APP_COMMIT not in ("", "unknown")
+    return jsonify({
+        "commit": APP_COMMIT, "short": APP_COMMIT[:7], "date": APP_COMMIT_DATE,
+        "latest": latest,
+        # only when this build's commit is known: a dev run must not claim to be outdated
+        "update_available": bool(known and latest and latest["commit"] != APP_COMMIT),
+    })
 
 
 @app.route("/api/info")

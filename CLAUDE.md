@@ -15,12 +15,17 @@ served by Flask in Docker on `gaia` (home server, Intel N150 iGPU).
 
 `/home/francesco/docker/mediaforge-web` on gaia is a clone of this repo (container `mediaforge-web`, port 5050,
 image `mediaforge-web:local`); it was converted from a plain folder on 2026-10-18 (old files kept as `*.bak*`,
-`data/` untouched). Deploy = push here, then on gaia (ask the user first: it restarts a service in use, and a
-rebuild kills running encodes because jobs live in memory, so check `curl localhost:5050/api/jobs` is `[]`):
+`data/` untouched). Deploy = push here, then on gaia (ask the user first: it restarts a service in use):
 
 ```bash
-ssh gaia "cd /home/francesco/docker/mediaforge-web && git pull --ff-only && docker compose up -d --build"
+ssh gaia "cd /home/francesco/docker/mediaforge-web && ./deploy.sh"
 ```
+
+`deploy.sh` refuses to run while an encode is in progress (jobs live in memory, a rebuild kills them; `--force`
+overrides), pulls, and rebuilds with the commit as build argument: the page footer shows that version and
+`/api/version` compares it with the latest commit of `main` on GitHub (asked at most once an hour, in the
+background, failures are silent) to show a "nuova versione disponibile" banner. A build without the commit
+(`docker compose up` by hand, a local run) shows "versione non nota" and never claims to be outdated.
 
 Safer first time for a big change: build a copy as `mediaforge-web:test` on port 5051 with its own library folder,
 try it, then deploy. Rollback: `docker tag mediaforge-web:backup-20261018 mediaforge-web:local && docker compose up -d`

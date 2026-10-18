@@ -18,6 +18,7 @@ encoding rules, different plumbing (files on the server, jobs in the background,
   (copy / SRT / none / mux afterwards), audio-only mode
 - Rate control: constant quality (CRF) or a target average bitrate, with optional 2-pass for `libx265`
 - "Ferma e tieni il file parziale": closes the running encode cleanly (ffmpeg `q`) and keeps a playable partial file
+- Version in the footer and a "new version available" banner (compares with the latest commit on GitHub)
 - Background jobs that survive closing the page (reattach from any browser)
 - Maintenance remux (no re-encode): fix the `hvc1` tag, fix a stale bitrate tag
 
@@ -30,6 +31,11 @@ docker compose up -d --build     # http://<server>:5050
 `docker-compose.yaml` is the one used on the author's server: adapt the library/output paths, the user and
 the `render` group id (`group_add`) to your machine; `/dev/dri` must be passed through for QuickSync.
 ffmpeg comes from the `jellyfin-ffmpeg7` package installed by the `Dockerfile`.
+
+## Update
+
+`./deploy.sh` in the project folder on the server pulls from GitHub and rebuilds the container (it refuses to run
+while a conversion is in progress).
 
 ## Limits
 

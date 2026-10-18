@@ -14,5 +14,11 @@ WORKDIR /app
 COPY app.py /app/app.py
 COPY static /app/static
 
+# Which commit this image was built from (shown in the page footer, compared with GitHub for
+# the "new version available" banner): see deploy.sh
+ARG GIT_COMMIT=unknown
+ARG GIT_DATE=
+ENV MEDIAFORGE_COMMIT=$GIT_COMMIT MEDIAFORGE_COMMIT_DATE=$GIT_DATE
+
 EXPOSE 5050
 CMD ["python3", "/app/app.py"]

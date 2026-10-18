@@ -1,6 +1,10 @@
 services:
   mediaforge-web:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_DATE: ${GIT_DATE:-}
     image: mediaforge-web:local
     container_name: mediaforge-web
     restart: unless-stopped
