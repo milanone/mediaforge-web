@@ -13,10 +13,19 @@ served by Flask in Docker on `gaia` (home server, Intel N150 iGPU).
 
 ## Deployment
 
-The running copy lives in `/home/francesco/docker/mediaforge-web` on gaia (container `mediaforge-web`, port 5050).
-Until a deploy script exists, gaia gets files by hand (ask the user before every deploy: it restarts a service in use); the repo was imported from there on 2026-10-18
-(commit "Import the version running on gaia"). Never edit on gaia without bringing the change back here.
-The GPU path can only be verified on gaia (Linux `-hwaccel qsv`), not on Windows.
+`/home/francesco/docker/mediaforge-web` on gaia is a clone of this repo (container `mediaforge-web`, port 5050,
+image `mediaforge-web:local`); it was converted from a plain folder on 2026-10-18 (old files kept as `*.bak*`,
+`data/` untouched). Deploy = push here, then on gaia (ask the user first: it restarts a service in use, and a
+rebuild kills running encodes because jobs live in memory, so check `curl localhost:5050/api/jobs` is `[]`):
+
+```bash
+ssh gaia "cd /home/francesco/docker/mediaforge-web && git pull --ff-only && docker compose up -d --build"
+```
+
+Safer first time for a big change: build a copy as `mediaforge-web:test` on port 5051 with its own library folder,
+try it, then deploy. Rollback: `docker tag mediaforge-web:backup-20261018 mediaforge-web:local && docker compose up -d`
+in that folder (that tag and `/home/francesco/docker/mediaforge-web.bak-20261018` hold the pre-clone version).
+Never edit files on gaia: change them here and pull. The GPU path (Linux `-hwaccel qsv`) can only be verified on gaia.
 
 ## Relationship with the desktop app
 
