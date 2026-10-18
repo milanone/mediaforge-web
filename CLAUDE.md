@@ -41,6 +41,12 @@ while a conversion runs: it just tries again the next night; log in `updates/aut
 `update-watcher.sh` for the in-page "Aggiorna ora" button is NOT installed (polling every minute was rejected), so
 that button stays hidden and the banner shows the manual command.
 
+GPU decoder warning: if ffmpeg prints a line of `GPU_DECODE_ERRORS` (the decoder is dropping frames but ffmpeg would
+still exit with 0), `run_ffmpeg_watchdog(watch_gpu=True)` raises `job["gpu_warning"]` and does NOT stop anything: software
+encoding on gaia is very slow, so the page asks the user (continue / stop / `/api/retry_software` = redo everything
+without GPU). The desktop app instead stops the attempt and falls back to software by itself. The Linux QSV decode path
+never showed the problem (AV1 1080p, also the real 2h27 film: 1800/1800 and 2700/2700 frames), so no `-extra_hw_frames` here.
+
 Safer first time for a big change: build a copy as `mediaforge-web:test` on port 5051 with its own library folder,
 try it, then deploy. Rollback: `docker tag mediaforge-web:backup-20261018 mediaforge-web:local && docker compose up -d`
 in that folder (that tag and `/home/francesco/docker/mediaforge-web.bak-20261018` hold the pre-clone version).
@@ -72,6 +78,7 @@ enforces the "same" rows.
 | Aspect ratio: crop / pad / DAR / stretch, "Originale", SAR/DAR rules | yes | yes | same (SAR parsing, DAR first, even-size rounding tested) |
 | Non-square pixels warning with one-click fix (Deforma + Originale), warnings in the command preview | yes | yes | same |
 | Real bitrate, declared bitrate, fix of a stale bitrate tag | yes | yes | same method; the web computes the real bitrate on every probe, the desktop only when nothing is declared or on request |
+| GPU decoder drops frames (error lines in the ffmpeg log) | stops the attempt, software fallback by itself | warning in the page: continue / stop / redo in software | different on purpose (software is very slow on gaia) |
 | GPU path | `d3d11va` + `hwmap` | `-hwaccel qsv` | different on purpose (platform) |
 | Encoders | QSV, AMF, NVENC, VideoToolbox, x265, SVT-AV1 | QSV, x265 | different on purpose |
 | Mux, Chapters, batch folder / library, upload, background jobs | desktop only / web only | | different on purpose |

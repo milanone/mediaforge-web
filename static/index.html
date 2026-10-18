@@ -349,6 +349,15 @@
       <div class="progress-label" id="progressLabel">In corso...</div>
       <button class="primary" id="stopBtn" style="background:var(--err); display:none" onclick="stopEncode()">Interrompi</button>
       <button class="primary" id="finishBtn" style="background:var(--muted); display:none; margin-top:6px" onclick="finishEncode()">Ferma e tieni il file parziale</button>
+      <div class="warn-box" id="gpuWarning" hidden style="flex-direction:column; align-items:stretch; margin-top:12px">
+        <div>⚠ Il decoder della GPU sta scartando fotogrammi: il file risultera' danneggiato (video accorciato, audio sfasato).
+          Riprovare in software evita il problema ma e' molto piu' lento.</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button type="button" onclick="gpuWarnContinue()">Continua comunque</button>
+          <button type="button" onclick="stopEncode()" style="background:var(--err)">Interrompi</button>
+          <button type="button" onclick="retrySoftware()">Riprova in software (lento)</button>
+        </div>
+      </div>
       <div class="log" id="log"></div>
     </div>
 
@@ -937,6 +946,19 @@ function updateTwoPassVisibility() {
   document.getElementById('twoPassLabel').style.display = sw ? 'inline-block' : 'none';
 }
 
+// GPU decoder warning: continue anyway / stop / redo everything in software
+let gpuWarnDismissed = false;
+function gpuWarnContinue() {
+  gpuWarnDismissed = true;
+  document.getElementById('gpuWarning').hidden = true;
+}
+function retrySoftware() {
+  if (!currentJobId) return;
+  fetch('/api/retry_software/' + currentJobId, { method: 'POST' }).then(r => r.json()).then(d => {
+    if (!d.error) { gpuWarnDismissed = false; document.getElementById('gpuWarning').hidden = true; }
+  });
+}
+
 function showStop(visible) {
   const stopBtn = document.getElementById('stopBtn'), finishBtn = document.getElementById('finishBtn');
   stopBtn.style.display = visible ? 'block' : 'none';
@@ -974,12 +996,15 @@ function pollStatus(jobId) {
     const data = await res.json();
     document.getElementById('progressBar').style.width = data.progress + '%';
     document.getElementById('progressLabel').textContent = data.progress + '%';
+    document.getElementById('gpuWarning').hidden = !(data.gpu_warning && data.status === 'running' && !gpuWarnDismissed);
+    if (!data.gpu_warning) gpuWarnDismissed = false;
     document.getElementById('log').textContent = data.log.join('\n');
     document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
 
     if (data.status === 'done') {
       clearInterval(pollTimer);
       let msg = data.partial ? 'Conversione fermata su richiesta: file parziale conservato.' : 'Conversione completata.';
+      if (data.gpu_warning) msg += ' ATTENZIONE: il decoder GPU ha scartato fotogrammi, il file e\' danneggiato.';
       if (data.output_bitrate) msg += ` Bitrate output: ${Math.round(data.output_bitrate/1000)} kb/s.`;
       if (data.output_size) msg += ` Dimensione: ${fmtBytes(data.output_size)}.`;
       document.getElementById('statusMsg').textContent = msg;

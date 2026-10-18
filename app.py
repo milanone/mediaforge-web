@@ -608,7 +608,13 @@ TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 STALL_TIMEOUT = 8.0  # secondi senza che "time=" avanzi prima di considerare lo stallo
 
 
-def run_ffmpeg_watchdog(cmd, job, duration) -> str:
+# ffmpeg lines that mean the GPU decoder is dropping frames even though ffmpeg would exit with success
+# (seen on the desktop app with d3d11va + AV1: 31% of the frames lost, A/V out of sync).
+GPU_DECODE_ERRORS = ("Static surface pool size exceeded", "Error submitting packet to decoder",
+                     "get_buffer() failed")
+
+
+def run_ffmpeg_watchdog(cmd, job, duration, watch_gpu=False) -> str:
     """Lancia UN tentativo ffmpeg e ne segue l'esito, inoltrando le righe al
     log del job. Oltre alla cancellazione manuale (job["cancel_requested"],
     vedi /api/stop) e al codice di uscita, rileva uno STALLO: se "time=" non
@@ -624,6 +630,9 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
     riga in questo stesso ciclo bloccherebbe il controllo periodico dello
     stallo proprio nel caso che deve rilevare, quello in cui non arriva piu'
     nessuna riga. Ritorna "ok"/"cancelled"/"stalled"/"error"/"finished".
+    watch_gpu: se una riga di ffmpeg segnala che il decoder GPU scarta fotogrammi, NON si ferma nulla (qui la
+    codifica software e' lentissima, la scelta e' dell'utente): si alza job["gpu_warning"] e la pagina chiede se
+    continuare, interrompere o riprovare in software (job["retry_software"] -> esito "retry_software").
     "finished" = chiusura pulita su richiesta (job["finish_requested"], vedi
     /api/finish): si manda "q" a ffmpeg, che finisce i fotogrammi in coda e
     scrive la chiusura del contenitore, cosi' il file parziale e' riproducibile
@@ -666,6 +675,10 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
             proc.terminate()
             outcome = "cancelled"
             break
+        if watch_gpu and job.get("retry_software"):
+            proc.terminate()
+            outcome = "retry_software"
+            break
         # Controllato ad OGNI giro, non solo quando la coda resta vuota: uno
         # stallo reale puo' comunque continuare a produrre un flusso fitto di
         # righe non di progresso, quindi il timeout della get() da solo non
@@ -692,6 +705,9 @@ def run_ffmpeg_watchdog(cmd, job, duration) -> str:
                 job["progress"] = max(0, min(100, round(cur / duration * 100, 1)))
         job["log"].append(line)
         job["log"] = job["log"][-300:]
+        if watch_gpu and not job.get("gpu_warning") and any(pat in line for pat in GPU_DECODE_ERRORS):
+            job["gpu_warning"] = True
+            job["log"].append("ATTENZIONE: il decoder GPU sta scartando fotogrammi, il file risultera' danneggiato.")
 
     proc.wait()
     if outcome == "finished" and proc.returncode not in (0, 255):
@@ -757,12 +773,22 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
                                    (" + scaling" if "scale_qsv" in " ".join(cmd) else "") + " su QSV" +
                                    (" (filtri in software)" if "hwdownload" in " ".join(cmd) else "") + ".")
 
-            outcome = run_ffmpeg_watchdog(cmd, job, duration)
+            outcome = run_ffmpeg_watchdog(cmd, job, duration, watch_gpu=hw_used)
 
             if outcome == "cancelled":
                 job["status"] = "cancelled"
                 dst_attempt.unlink(missing_ok=True)
                 return
+
+            if outcome == "retry_software":
+                # chosen by the user in the page after the GPU decoder warning
+                job["log"].append("Riprovo tutto in software su richiesta (molto piu' lento).")
+                dst_attempt.unlink(missing_ok=True)
+                job["gpu_warning"] = False
+                job["retry_software"] = False
+                job["progress"] = 0
+                use_hw = False
+                continue
 
             if hw_used and outcome in ("error", "stalled"):
                 job["log"].append("Decodifica/scaling su GPU non riusciti: riprovo tutto in software.")
@@ -1266,6 +1292,7 @@ def status(job_id):
         "output_bitrate": job.get("output_bitrate"),
         "output_size": job.get("output_size"),
         "partial": bool(job.get("partial")),
+        "gpu_warning": bool(job.get("gpu_warning")),
     })
 
 
@@ -1305,6 +1332,18 @@ def finish_job(job_id):
     if not job.get("proc") or job["status"] != "running":
         return jsonify({"error": "il job non e' in esecuzione"}), 400
     job["finish_requested"] = True
+    return jsonify({"ok": True})
+
+
+@app.route("/api/retry_software/<job_id>", methods=["POST"])
+def retry_software(job_id):
+    """After the GPU decoder warning: stop this attempt and redo the whole job with software decoding."""
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "not found"}), 404
+    if job["status"] != "running" or not job.get("gpu_warning"):
+        return jsonify({"error": "nessun avviso del decoder GPU su questo lavoro"}), 400
+    job["retry_software"] = True
     return jsonify({"ok": True})
 
 
