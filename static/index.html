@@ -114,6 +114,15 @@
     position: static; background: var(--accent); color: #fff; border-radius: 6px; padding: 5px 12px;
     font-size: 0.85rem; margin-right: 8px;
   }
+  .warn-box {
+    border: 1px solid #cc6600; color: #ffb066; border-radius: 8px; padding: 8px 12px; margin-top: 10px;
+    font-size: 0.82rem; display: flex; gap: 10px; align-items: center;
+  }
+  .warn-box button {
+    flex: none; background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 6px 12px; cursor: pointer; font-size: 0.82rem;
+  }
+  .preview-warnings { color: #ffb066; font-size: 0.8rem; margin-top: 6px; white-space: pre-line; }
   .footer { color: var(--muted); font-size: 0.75rem; text-align: center; margin-top: 24px; }
   .footer button {
     background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px;
@@ -326,7 +335,12 @@
     </div>
 
     <img id="framePreview" class="video-preview" hidden alt="Anteprima fotogramma">
+    <div class="warn-box" id="sarWarning" hidden>
+      <span id="sarWarningText"></span>
+      <button type="button" onclick="fixNonSquare()">Correggi: Deforma + Originale</button>
+    </div>
     <div class="cmd-preview" id="cmdPreview">$ ...</div>
+    <div class="preview-warnings" id="previewWarnings"></div>
 
     <button class="primary" id="encodeBtn" onclick="startEncode()">Converti</button>
 
@@ -437,6 +451,23 @@ function onAudioModeChange() {
     document.getElementById('audioBitrate').value = audioDefaultBitrate[mode] || 128;
   }
   schedulePreview();
+}
+
+// Non-square pixels (anamorphic source): some players ignore the SAR label and show the video squashed
+function showSarWarning(v) {
+  const box = document.getElementById('sarWarning');
+  if (!v || !v.non_square) { box.hidden = true; return; }
+  document.getElementById('sarWarningText').textContent =
+    `⚠ Pixel non quadrati (SAR ${v.sar}, DAR ${v.dar || '?'}): i player che ignorano questa etichetta mostrano il video ` +
+    `schiacciato. Per correggerlo ovunque usa Aspect ratio → Deforma con rapporto "Originale" (ricodifica con pixel quadrati). ` +
+    `"Solo correggi DAR" riscrive soltanto l'etichetta: alcuni player la ignorano.`;
+  box.hidden = false;
+}
+
+function fixNonSquare() {
+  document.getElementById('arMode').value = 'stretch';
+  document.getElementById('arRatio').value = 'Originale';
+  onArModeChange();
 }
 
 function onArModeChange() {
@@ -648,6 +679,7 @@ async function loadProbe() {
             (v.declared_bitrate ? ` (dichiarato: ${Math.round(v.declared_bitrate/1000)} kb/s)` : ' (nessun bitrate dichiarato nel tag)');
   }
   document.getElementById('fileInfo').innerHTML = info;
+  showSarWarning(v);
 
   const audioBox = document.getElementById('audioTracks');
   const subBox = document.getElementById('subTracks');
@@ -806,6 +838,7 @@ async function updatePreview() {
   });
   const data = await res.json();
   document.getElementById('cmdPreview').textContent = '$ ' + (data.cmd || data.error || '');
+  document.getElementById('previewWarnings').textContent = (data.warnings || []).map(w => '⚠ ' + w).join('\n');
 
   const img = document.getElementById('framePreview');
   if (opts.audio_only || !opts.ar_mode || opts.ar_mode === 'none') {

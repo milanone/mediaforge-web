@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import queue
 import re
@@ -176,24 +177,99 @@ def parse_ratio(ratio_str):
 
 
 def sar_numeric(video):
-    sar = (video or {}).get("sample_aspect_ratio") or "1:1"
+    """Sample aspect ratio as a number. 1.0 when absent, unknown ("0:1" and "N/A" are what ffprobe
+    prints for an unknown SAR, not "non-square") or invalid. Same rules as the desktop sar_numerico."""
+    sar = ((video or {}).get("sample_aspect_ratio") or "").strip()
+    if not sar or sar in ("0:1", "N/A"):
+        return 1.0
     try:
-        n, d = sar.split(":")
-        n, d = float(n), float(d)
-        return n / d if d else 1.0
-    except (ValueError, AttributeError):
+        if ":" in sar:
+            n, d = sar.split(":")
+            n, d = float(n), float(d)
+            return n / d if d else 1.0
+        val = float(sar)
+        return val if val > 0 else 1.0
+    except ValueError:
         return 1.0
 
 
+def original_ratio(video):
+    """Current display ratio of the file (the "Originale" choice): the DAR written in the file when it is valid,
+    else width * sar / height. None when it cannot be determined. Same as the desktop rapporto_originale."""
+    if not video:
+        return None
+    dar = (video.get("display_aspect_ratio") or "").strip()
+    if dar and dar not in ("0:1", "N/A"):
+        val = parse_ratio(dar)
+        if val:
+            return val
+    w, h = video.get("width"), video.get("height")
+    if not w or not h:
+        return None
+    return w * sar_numeric(video) / h
+
+
 def resolve_ratio(text, video):
-    """'Originale' usa il DAR attuale del file (w*sar/h); altrimenti parse_ratio."""
+    """'Originale' = current display ratio of the file (original_ratio); otherwise parse_ratio."""
     text = (text or "").strip()
     if text.lower() == "originale":
-        w, h = (video or {}).get("width"), (video or {}).get("height")
-        if not w or not h:
-            return None
-        return w * sar_numeric(video) / h
+        return original_ratio(video)
     return parse_ratio(text)
+
+
+def non_square_pixels(video):
+    """(sar, dar) strings when the video has non-square pixels (SAR other than 1:1), else None."""
+    sar = ((video or {}).get("sample_aspect_ratio") or "").strip()
+    if not sar or sar in ("1:1", "0:1", "N/A"):
+        return None
+    return sar, (video.get("display_aspect_ratio") or "?")
+
+
+def target_dims_even(iw, ih, ratio, mode, sar=1.0):
+    """Same formulas and rounding as the ffmpeg expressions for crop / pad / stretch (see build_filters),
+    to tell the user when the requested size is corrected to even numbers (needed by 4:2:0 encoders).
+    Returns (raw_w, raw_h, final_w, final_h) or None. Same as the desktop dimensioni_target_pari."""
+    if mode == "crop":
+        w_raw = min(iw * sar, ih * ratio) / sar
+        h_raw = min(ih, iw * sar / ratio)
+        rnd = lambda v: 2 * math.floor(v / 2)
+    elif mode == "pad":
+        # pad can only add space: round up, never below the source size
+        w_raw = max(iw * sar, ih * ratio) / sar
+        h_raw = max(ih, iw * sar / ratio)
+        rnd = lambda v: 2 * math.ceil(v / 2)
+    elif mode == "stretch":
+        # stretch always ends with SAR=1: the source SAR does not enter the calculation
+        w_raw, h_raw = ih * ratio, ih
+        rnd = lambda v: 2 * math.floor(v / 2)
+    else:
+        return None
+    return w_raw, h_raw, rnd(w_raw), rnd(h_raw)
+
+
+def ar_warnings(opts, video):
+    """Messages for the command preview about the aspect-ratio choice: invalid ratio, "Originale" without
+    a file, or a size corrected to even numbers (measured after the resolution cap)."""
+    mode = opts.get("ar_mode")
+    if not mode or mode == "none":
+        return []
+    text = opts.get("ar_ratio") or ""
+    ratio = resolve_ratio(text, video)
+    if not ratio:
+        if text.strip().lower() == "originale":
+            return ["Rapporto 'Originale' non disponibile: seleziona un file per usarlo."]
+        return [f"Aspect ratio '{text}' non valido (usa es. 16:9 o 1.85): nessuna modifica applicata."]
+    out = []
+    w, h = (video or {}).get("width"), (video or {}).get("height")
+    if mode in ("crop", "pad", "stretch") and w and h:
+        capped = hw_cap_size(video, opts.get("resolution_cap"))
+        iw, ih = capped if capped else (w, h)
+        res = target_dims_even(iw, ih, ratio, mode, sar_numeric(video))
+        # only when rounding really changes the size (622.2 -> 622 is not a correction)
+        if res and (round(res[0]) != res[2] or round(res[1]) != res[3]):
+            out.append(f"Il rapporto scelto richiederebbe {res[0]:.0f}x{res[1]:.0f}: corretto a "
+                       f"{res[2]}x{res[3]} (servono numeri pari, richiesti dall'encoder).")
+    return out
 
 
 def build_filters(opts, video, bake_ar=False):
@@ -950,6 +1026,9 @@ def probe_route():
             "fps": eval(video["r_frame_rate"]) if video and "/" in str(video.get("r_frame_rate", "")) else None,
             "real_bitrate": real_bitrate,
             "declared_bitrate": declared_video_bitrate(video),
+            "sar": video.get("sample_aspect_ratio") if video else None,
+            "dar": video.get("display_aspect_ratio") if video else None,
+            "non_square": bool(video and non_square_pixels(video)),
         } if video else None,
         "audio": [
             {"index": i, "codec": s.get("codec_name"), "language": lang_of(s),
@@ -1033,7 +1112,8 @@ def preview():
     probe = ffprobe_json(src)
     dst = OUTPUT_DIR / ("preview" + container_ext(data, src))
     cmd = build_cmd(src, dst, data, probe)
-    return jsonify({"cmd": " ".join(cmd)})
+    video, _, _, _ = simplify_streams(probe)
+    return jsonify({"cmd": " ".join(cmd), "warnings": ar_warnings(data, video)})
 
 
 @app.route("/api/frame_preview", methods=["POST"])

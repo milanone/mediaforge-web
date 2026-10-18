@@ -118,12 +118,53 @@ class Parity(unittest.TestCase):
             probe_of(video), hwaccel_decode=False)
         self.assertEqual(arg_after(wc, "-vf"), arg_after(dc, "-vf"))
 
+    def test_sar_and_original_ratio_rules(self):
+        """SAR parsing and "Originale" must give the same number on both sides."""
+        samples = [
+            {}, {"sample_aspect_ratio": "1:1"}, {"sample_aspect_ratio": "0:1"}, {"sample_aspect_ratio": "N/A"},
+            {"sample_aspect_ratio": "8:9", "display_aspect_ratio": "35:27", "width": 700, "height": 480},
+            {"sample_aspect_ratio": "8:9", "display_aspect_ratio": "0:1", "width": 700, "height": 480},
+            {"sample_aspect_ratio": "32:27", "width": 720, "height": 576},
+            {"sample_aspect_ratio": "garbage", "width": 1920, "height": 1080},
+        ]
+        for v in samples:
+            self.assertAlmostEqual(web.sar_numeric(v), self.desk.sar_numerico(v), msg=str(v))
+            a, b = web.resolve_ratio("Originale", v), self.desk.risolvi_rapporto_ar("Originale", v)
+            self.assertEqual(bool(a), bool(b), str(v))
+            if a:
+                self.assertAlmostEqual(a, b, msg=str(v))
+
+    def test_even_size_correction_matches(self):
+        for mode in ("crop", "pad", "stretch"):
+            for ratio in (16 / 9, 4 / 3, 2.39, 35 / 27):
+                for sar in (1.0, 8 / 9):
+                    w = web.target_dims_even(1279, 719, ratio, mode, sar)
+                    d = self.desk.dimensioni_target_pari(1279, 719, ratio, mode, sar)
+                    self.assertEqual(w, d, (mode, ratio, sar))
+
     def test_stats_tags_cleared_on_video(self):
         self.assertEqual(web.STATS_TAGS_MKV, self.desk.STATS_TAGS_MKV)
 
 
 class WebOnly(unittest.TestCase):
     """Behaviour of the web engine on its own (no desktop needed)."""
+
+    def test_non_square_pixels_detection(self):
+        self.assertEqual(web.non_square_pixels({"sample_aspect_ratio": "8:9", "display_aspect_ratio": "35:27"}),
+                         ("8:9", "35:27"))
+        for sar in ("1:1", "0:1", "N/A", "", None):
+            self.assertIsNone(web.non_square_pixels({"sample_aspect_ratio": sar}))
+
+    def test_preview_warnings(self):
+        v = video_stream(701, 479, "h264", "yuv420p")
+        self.assertEqual(web.ar_warnings({"ar_mode": "none"}, v), [])
+        self.assertIn("non valido", web.ar_warnings({"ar_mode": "crop", "ar_ratio": "boh"}, v)[0])
+        self.assertIn("non disponibile", web.ar_warnings({"ar_mode": "dar", "ar_ratio": "Originale"}, None)[0])
+        self.assertIn("numeri pari", web.ar_warnings({"ar_mode": "crop", "ar_ratio": "16:9"}, v)[0])
+        self.assertEqual(web.ar_warnings({"ar_mode": "dar", "ar_ratio": "16:9"}, v), [])
+        # a size that only rounds to itself (622.2 -> 622) is not a "correction"
+        hd = video_stream(1920, 1080, "h264", "yuv420p")
+        self.assertEqual(web.ar_warnings({"ar_mode": "crop", "ar_ratio": "16:9"}, hd), [])
 
     def test_hw_plan_gating(self):
         ok = video_stream(3840, 2160, "hevc", "yuv420p10le")
