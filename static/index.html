@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MediaForge Web</title>
+<style>
+  :root {
+    --bg: #10141c; --panel: #1a2030; --border: #2a3348; --text: #e6e9f0;
+    --muted: #8b94a8; --accent: #4f8cff; --accent-hover: #3a75e8;
+    --ok: #3ecf8e; --err: #ff5c72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  h2 { font-size: 0.95rem; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn {
+    flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); cursor: pointer; font-size: 0.9rem;
+  }
+  .tab-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .browser { border: 1px solid var(--border); border-radius: 8px; max-height: 220px; overflow-y: auto; }
+  .browser-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer;
+    border-bottom: 1px solid var(--border); font-size: 0.9rem;
+  }
+  .browser-row:last-child { border-bottom: none; }
+  .browser-row:hover { background: rgba(255,255,255,0.04); }
+  .browser-row.selected { background: rgba(79,140,255,0.18); }
+  .breadcrumb { font-size: 0.82rem; color: var(--muted); padding: 8px 12px; }
+  .browser-row, .browser-head { display: grid; grid-template-columns: 1fr 80px 90px; }
+  .browser-head {
+    position: sticky; top: 0; z-index: 1; gap: 8px; padding: 6px 12px; font-size: 0.78rem;
+    color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .browser-head span { cursor: pointer; user-select: none; }
+  .browser-head span:hover { color: var(--text, #fff); }
+  .browser-head span:nth-child(3), .browser-cell-size { text-align: right; }
+  .browser-cell-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .browser-cell-type, .browser-cell-size { color: var(--muted); font-size: 0.82rem; }
+  .drop-zone {
+    border: 2px dashed var(--border); border-radius: 8px; padding: 28px; text-align: center;
+    color: var(--muted); cursor: pointer; font-size: 0.9rem;
+  }
+  .drop-zone.drag { border-color: var(--accent); color: var(--text); }
+  .selected-file {
+    font-size: 0.85rem; color: var(--ok); margin-top: 12px; word-break: break-all; min-height: 1.2em;
+  }
+  .file-info { font-size: 0.82rem; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+  .video-preview { width: 100%; max-height: 320px; border-radius: 8px; margin-top: 10px; background: #000; object-fit: contain; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 20px; }
+  .field label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=text], input[type=number] {
+    width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 0.85rem;
+  }
+  input[type=range] { width: 100%; }
+  .checkline { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; margin: 6px 0; }
+  .streams-box { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
+  .streams-col { min-width: 200px; }
+  .streams-col h3 { font-size: 0.78rem; color: var(--muted); margin: 0 0 6px; text-transform: uppercase; }
+  button.primary {
+    background: var(--accent); color: white; border: none; border-radius: 8px;
+    padding: 12px 20px; font-size: 0.95rem; cursor: pointer; margin-top: 8px; width: 100%;
+  }
+  button.primary:hover { background: var(--accent-hover); }
+  button.primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+  .btn-mini {
+    background: var(--border); color: var(--text); border: none; border-radius: 6px;
+    padding: 4px 10px; font-size: 0.75rem; cursor: pointer; white-space: nowrap;
+  }
+  .btn-mini:hover { background: var(--accent); }
+  .cmd-preview {
+    background: #0a0d13; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; font-family: ui-monospace, Consolas, monospace; font-size: 0.72rem;
+    color: var(--muted); word-break: break-all; margin-top: 10px;
+  }
+  .progress-wrap { margin-top: 16px; display: none; }
+  .progress-bar-bg { background: var(--border); border-radius: 6px; height: 10px; overflow: hidden; }
+  .progress-bar { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; }
+  .progress-label { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+  .log {
+    background: #0a0d13; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; font-family: ui-monospace, Consolas, monospace; font-size: 0.72rem;
+    color: var(--muted); max-height: 160px; overflow-y: auto; margin-top: 10px; white-space: pre-wrap;
+  }
+  .download-btn {
+    display: none; text-align: center; background: var(--ok); color: #06251a;
+    padding: 12px; border-radius: 8px; margin-top: 14px; text-decoration: none; font-weight: 600;
+  }
+  .status-msg { font-size: 0.85rem; margin-top: 10px; }
+  .status-msg.err { color: var(--err); }
+  .status-msg.ok { color: var(--ok); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MediaForge Web</h1>
+  <div class="sub">Trascodifica HEVC/H.264 via QSV (GPU Intel) — Gaia</div>
+
+  <div class="card">
+    <h2>Sorgente</h2>
+    <div class="tabs">
+      <button class="tab-btn active" id="tabLibraryBtn" onclick="switchTab('library')">Libreria</button>
+      <button class="tab-btn" id="tabUploadBtn" onclick="switchTab('upload')">Carica file</button>
+    </div>
+
+    <div id="tabLibrary">
+      <div class="breadcrumb" id="breadcrumb">/</div>
+      <div class="browser" id="browser"></div>
+    </div>
+
+    <div id="tabUpload" style="display:none">
+      <div class="drop-zone" id="dropZone">
+        Trascina qui un file video, o clicca per selezionarlo
+        <input type="file" id="fileInput" style="display:none" accept="video/*">
+      </div>
+      <div class="progress-wrap" id="uploadProgressWrap" style="display:none; margin-top:14px">
+        <div class="progress-bar-bg"><div class="progress-bar" id="uploadProgressBar"></div></div>
+        <div class="progress-label" id="uploadProgressLabel">0%</div>
+      </div>
+    </div>
+
+    <div class="selected-file" id="selectedFile"></div>
+    <div class="file-info" id="fileInfo"></div>
+    <video id="sourcePreview" class="video-preview" controls hidden></video>
+
+    <div class="streams-box" id="streamsBox" hidden>
+      <div class="streams-col">
+        <h3>Audio</h3>
+        <div id="audioTracks"></div>
+      </div>
+      <div class="streams-col">
+        <h3>Sottotitoli</h3>
+        <div id="subTracks"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="optionsCard" hidden>
+    <h2>Opzioni</h2>
+    <div class="checkline">
+      <input type="checkbox" id="audioOnly" onchange="onAudioOnlyChange()">
+      <label for="audioOnly">Solo audio (estrai/converti solo la traccia audio)</label>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label>Audio</label>
+        <select id="audioMode" onchange="onAudioModeChange()">
+          <option value="copy">Copia originale</option>
+          <option value="aac">AAC</option>
+          <option value="ac3">AC3</option>
+          <option value="mp3">MP3</option>
+        </select>
+      </div>
+      <div class="field" id="audioBitrateField" hidden>
+        <label>Bitrate audio (kb/s)</label>
+        <input type="number" id="audioBitrate" min="32" max="1024" step="32" oninput="schedulePreview()">
+      </div>
+      <div class="field" id="subsModeField">
+        <label>Sottotitoli</label>
+        <select id="subsMode" onchange="schedulePreview()" title="&quot;Muxa a fine codifica&quot;: i sottotitoli vengono esclusi dalla codifica principale e aggiunti dopo con un remux separato (nessuna perdita, solo un passaggio extra) — utile per bypassare a mano un file che si blocca in codifica per colpa dei sottotitoli. Se la codifica si blocca comunque (sottotitoli con timestamp corrotto), l'app ritenta da sola in questo stesso modo prima di segnalare un errore.">
+          <option value="copy">Copia</option>
+          <option value="srt">Converti in SRT</option>
+          <option value="no">Escludi</option>
+          <option value="mux">Muxa a fine codifica</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="grid video-only-group" id="videoOptions">
+      <div class="field">
+        <label>Codec video</label>
+        <select id="codec"></select>
+      </div>
+      <div class="field">
+        <label>Qualità: <span id="qualityLabel">20</span> (16=migliore, 32=peggiore) —
+          <span id="qualityAutoState" style="color:var(--muted)">automatica</span></label>
+        <div style="display:flex; align-items:center; gap:8px">
+          <input type="range" id="quality" min="16" max="32" value="20" style="flex:1" oninput="onQualityInput()">
+          <button type="button" class="btn-mini" id="qualityAutoBtn" style="display:none" onclick="resetQualityAuto()">↺ Auto</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Risoluzione massima</label>
+        <select id="resCap" onchange="schedulePreview()">
+          <option value="">Originale</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>FPS</label>
+        <select id="fps" onchange="schedulePreview()">
+          <option value="">Originale</option>
+          <option value="24000/1001">23,976</option>
+          <option value="24">24</option>
+          <option value="25">25</option>
+          <option value="30000/1001">29,97</option>
+          <option value="30">30</option>
+          <option value="50">50</option>
+          <option value="60000/1001">59,94</option>
+          <option value="60">60</option>
+        </select>
+        <button type="button" id="fpsDetectBtn" onclick="detectFps()" style="margin-top:6px">Verifica FPS originali</button>
+        <div id="fpsDetectMsg" style="font-size:0.78rem;color:var(--muted);margin-top:4px"></div>
+      </div>
+      <div class="field">
+        <label>Capovolgi</label>
+        <select id="flip" onchange="schedulePreview()">
+          <option value="">Nessuno</option>
+          <option value="h">Orizzontale</option>
+          <option value="v">Verticale</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Contenitore</label>
+        <select id="container" onchange="schedulePreview()">
+          <option value="mkv">MKV</option>
+          <option value="mp4">MP4</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Preset (velocità/qualità)</label>
+        <select id="preset" onchange="schedulePreview()"></select>
+      </div>
+      <div class="field checkline" style="margin-top:22px">
+        <input type="checkbox" id="lookAhead" checked onchange="schedulePreview()">
+        <label for="lookAhead">Look-ahead (qualità migliore, più lento)</label>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:14px">
+      <div class="field">
+        <label>Inizio (taglio, HH:MM:SS - opzionale)</label>
+        <input type="text" id="trimStart" placeholder="00:00:00" oninput="schedulePreview()">
+      </div>
+      <div class="field">
+        <label>Durata (HH:MM:SS - opzionale)</label>
+        <input type="text" id="trimDuration" placeholder="" oninput="schedulePreview()">
+      </div>
+    </div>
+
+    <div class="grid video-only-group" style="margin-top:14px">
+      <div class="field">
+        <label>Aspect ratio</label>
+        <select id="arMode" onchange="onArModeChange()">
+          <option value="none">Nessuna modifica</option>
+          <option value="crop">Ritaglia (crop)</option>
+          <option value="pad">Aggiungi barre (pad)</option>
+          <option value="dar">Solo correggi DAR</option>
+          <option value="stretch">Deforma (stretch)</option>
+        </select>
+      </div>
+      <div class="field" id="arRatioField" hidden>
+        <label>Rapporto</label>
+        <input type="text" id="arRatio" value="16:9" list="arRatioPresets" oninput="schedulePreview()">
+        <datalist id="arRatioPresets">
+          <option value="Originale">
+          <option value="16:9">
+          <option value="4:3">
+          <option value="21:9">
+          <option value="1:1">
+          <option value="1.85:1">
+          <option value="2.35:1">
+          <option value="2.39:1">
+        </datalist>
+      </div>
+    </div>
+
+    <img id="framePreview" class="video-preview" hidden alt="Anteprima fotogramma">
+    <div class="cmd-preview" id="cmdPreview">$ ...</div>
+
+    <button class="primary" id="encodeBtn" onclick="startEncode()">Converti</button>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="progress-label" id="progressLabel">In corso...</div>
+      <button class="primary" id="stopBtn" style="background:var(--err); display:none" onclick="stopEncode()">Interrompi</button>
+      <div class="log" id="log"></div>
+    </div>
+
+    <div class="status-msg" id="statusMsg"></div>
+    <a class="download-btn" id="downloadBtn" href="#">Scarica file convertito</a>
+    <video id="outputPreview" class="video-preview" controls hidden></video>
+  </div>
+
+  <div class="card" id="toolsCard" hidden>
+    <h2>Strumenti (remux veloce, nessuna ricodifica)</h2>
+    <div style="display:flex; gap:12px; flex-wrap:wrap">
+      <button class="primary" style="width:auto; flex:1; margin-top:0" onclick="runMaintenance('fix_hvc1')">
+        Correggi tag HEVC (hvc1) — compatibilità Apple/QuickTime
+      </button>
+      <button class="primary" style="width:auto; flex:1; margin-top:0" onclick="runMaintenance('fix_bitrate')">
+        Correggi tag bitrate (calcola quello reale)
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentPath = "";
+let selected = null;
+let probeData = null;
+let pollTimer = null;
+let previewTimer = null;
+let currentJobId = null;
+let qualityManual = false;
+let updatingQualityAuto = false;
+
+function switchTab(tab) {
+  document.getElementById('tabLibrary').style.display = tab === 'library' ? '' : 'none';
+  document.getElementById('tabUpload').style.display = tab === 'upload' ? '' : 'none';
+  document.getElementById('tabLibraryBtn').classList.toggle('active', tab === 'library');
+  document.getElementById('tabUploadBtn').classList.toggle('active', tab === 'upload');
+}
+
+// L'encoder hardware QSV ha in pratica 3 livelli reali (misurato su N150: da fast a
+// slow il file e' identico; faster=veryfast e slower=veryslow): il menu ne offre 3.
+// libx265 (software) ha invece tutti e 7 i preset.
+const QSV_PRESETS = [
+  ['veryfast', 'Veloce (circa -25% di tempo, file circa +10%, stessa qualità)'],
+  ['medium', 'Normale (predefinito)'],
+  ['veryslow', 'Lento (+45% di tempo, file circa -5%, stessa qualità)'],
+];
+let allPresets = [];
+function buildPresetOptions() {
+  const sel = document.getElementById('preset');
+  const prev = sel.value;
+  const qsv = (document.getElementById('codec').value || '').endsWith('_qsv');
+  const list = qsv ? QSV_PRESETS : allPresets.map(p => [p, PRESET_LABELS[p] || p]);
+  sel.innerHTML = '';
+  list.forEach(([v, label]) => {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = label;
+    sel.appendChild(opt);
+  });
+  // conserva la scelta se esiste ancora; altrimenti riporta al livello equivalente
+  const map = {faster: 'veryfast', fast: 'medium', slow: 'medium', slower: 'veryslow'};
+  const want = qsv ? (map[prev] || prev) : prev;
+  sel.value = list.some(([v]) => v === want) ? want : 'medium';
+}
+const PRESET_LABELS = {
+  veryfast: "Molto veloce (qualità minima)", faster: "Più veloce", fast: "Veloce",
+  medium: "Media (bilanciato)", slow: "Lento", slower: "Più lento", veryslow: "Molto lento (qualità massima)",
+};
+
+let audioDefaultBitrate = { aac: 128, ac3: 384, mp3: 128 };
+
+async function loadEncoders() {
+  const res = await fetch('/api/info');
+  const data = await res.json();
+  const sel = document.getElementById('codec');
+  sel.innerHTML = '';
+  data.encoders.forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e.value; opt.textContent = e.label;
+    sel.appendChild(opt);
+  });
+  sel.onchange = () => { buildPresetOptions(); updateQualityAuto(); schedulePreview(); };
+
+  allPresets = data.presets;
+  buildPresetOptions();
+
+  if (data.audio_default_bitrate) audioDefaultBitrate = data.audio_default_bitrate;
+}
+
+function onAudioModeChange() {
+  const mode = document.getElementById('audioMode').value;
+  const field = document.getElementById('audioBitrateField');
+  if (mode === 'copy') {
+    field.hidden = true;
+  } else {
+    field.hidden = false;
+    document.getElementById('audioBitrate').value = audioDefaultBitrate[mode] || 128;
+  }
+  schedulePreview();
+}
+
+function onArModeChange() {
+  const mode = document.getElementById('arMode').value;
+  document.getElementById('arRatioField').hidden = mode === 'none';
+  schedulePreview();
+}
+
+let browseData = null;
+let browseSort = { key: 'name', dir: 1 };
+try { const saved = JSON.parse(localStorage.getItem('mfBrowseSort')); if (saved && saved.key) browseSort = saved; } catch (e) {}
+
+async function loadDir(path) {
+  const res = await fetch('/api/browse?path=' + encodeURIComponent(path));
+  browseData = await res.json();
+  currentPath = browseData.current || "";
+  document.getElementById('breadcrumb').textContent = '/' + currentPath;
+  renderBrowser();
+}
+
+function setBrowseSort(key) {
+  if (browseSort.key === key) browseSort.dir = -browseSort.dir;
+  else browseSort = { key, dir: 1 };
+  try { localStorage.setItem('mfBrowseSort', JSON.stringify(browseSort)); } catch (e) {}
+  renderBrowser();
+}
+
+function renderBrowser() {
+  const data = browseData;
+  const el = document.getElementById('browser');
+  el.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'browser-head';
+  [['name', 'Nome'], ['type', 'Tipo'], ['size', 'Dimensione']].forEach(([key, label]) => {
+    const sp = document.createElement('span');
+    sp.textContent = label + (browseSort.key === key ? (browseSort.dir > 0 ? ' ▲' : ' ▼') : '');
+    sp.onclick = () => setBrowseSort(key);
+    head.appendChild(sp);
+  });
+  el.appendChild(head);
+
+  if (currentPath) {
+    const up = document.createElement('div');
+    up.className = 'browser-row';
+    up.textContent = '.. (su)';
+    up.onclick = () => loadDir(currentPath.split('/').slice(0, -1).join('/'));
+    el.appendChild(up);
+  }
+
+  const entries = (data.entries || []).slice();
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  const cmp = {
+    name: byName,
+    type: (a, b) => a.type.localeCompare(b.type) || byName(a, b),
+    size: (a, b) => ((a.size ?? -1) - (b.size ?? -1)) || byName(a, b),
+  }[browseSort.key];
+  // le cartelle restano sempre in cima; l'ordine scelto vale dentro ciascun gruppo
+  entries.sort((a, b) => (b.dir - a.dir) || cmp(a, b) * browseSort.dir);
+
+  entries.forEach(e => {
+    const row = document.createElement('div');
+    row.className = 'browser-row';
+    const name = document.createElement('span');
+    name.className = 'browser-cell-name';
+    name.textContent = (e.dir ? '📁 ' : '🎬 ') + e.name;
+    name.title = e.name;
+    const type = document.createElement('span');
+    type.className = 'browser-cell-type';
+    type.textContent = e.type;
+    const size = document.createElement('span');
+    size.className = 'browser-cell-size';
+    size.textContent = e.size == null ? '' : fmtBytes(e.size);
+    row.append(name, type, size);
+    row.onclick = e.dir
+      ? () => loadDir(e.path)
+      : () => selectFile(row, { source: 'library', path: e.path, displayName: e.name });
+    el.appendChild(row);
+  });
+
+  if (!entries.length) {
+    const row = document.createElement('div');
+    row.className = 'browser-row';
+    row.style.color = 'var(--muted)';
+    row.textContent = 'Cartella vuota';
+    el.appendChild(row);
+  }
+}
+
+async function selectFile(rowEl, sel) {
+  document.querySelectorAll('.browser-row.selected').forEach(r => r.classList.remove('selected'));
+  if (rowEl) rowEl.classList.add('selected');
+  selected = sel;
+  document.getElementById('selectedFile').textContent = 'Selezionato: ' + (sel.displayName || sel.path.split('/').pop());
+  document.getElementById('optionsCard').hidden = false;
+  document.getElementById('toolsCard').hidden = false;
+
+  const preview = document.getElementById('sourcePreview');
+  preview.src = '/api/stream?source=' + sel.source + '&path=' + encodeURIComponent(sel.path);
+  preview.hidden = false;
+
+  const outPreview = document.getElementById('outputPreview');
+  outPreview.hidden = true;
+  outPreview.removeAttribute('src');
+
+  await loadProbe();
+}
+
+document.getElementById('dropZone').onclick = () => document.getElementById('fileInput').click();
+document.getElementById('fileInput').onchange = (e) => uploadFile(e.target.files[0]);
+const dz = document.getElementById('dropZone');
+dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('drag'); };
+dz.ondragleave = () => dz.classList.remove('drag');
+dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove('drag'); uploadFile(e.dataTransfer.files[0]); };
+
+function uploadFile(file) {
+  if (!file) return;
+  document.getElementById('dropZone').textContent = 'Caricamento: ' + file.name;
+  const wrap = document.getElementById('uploadProgressWrap');
+  const bar = document.getElementById('uploadProgressBar');
+  const label = document.getElementById('uploadProgressLabel');
+  wrap.style.display = 'block';
+  bar.style.width = '0%';
+  label.textContent = '0%';
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/upload');
+
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round((e.loaded / e.total) * 100);
+    bar.style.width = pct + '%';
+    label.textContent = pct + '% (' + fmtBytes(e.loaded) + ' / ' + fmtBytes(e.total) + ')';
+  };
+
+  xhr.onload = () => {
+    if (xhr.status !== 200) {
+      label.textContent = 'Errore durante il caricamento (' + xhr.status + ')';
+      return;
+    }
+    const data = JSON.parse(xhr.responseText);
+    document.getElementById('dropZone').textContent = 'Caricato: ' + file.name;
+    label.textContent = 'Caricamento completato.';
+    selectFile(null, { source: 'upload', path: data.path, displayName: file.name });
+  };
+
+  xhr.onerror = () => {
+    label.textContent = 'Errore di rete durante il caricamento.';
+  };
+
+  xhr.send(fd);
+}
+
+function fmtBytes(n) {
+  if (!n) return '?';
+  const u = ['B','KB','MB','GB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(1) + ' ' + u[i];
+}
+function fmtDuration(s) {
+  if (!s) return '?';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return [h, m, sec].map((v, i) => i === 0 && v === 0 ? null : String(v).padStart(2, '0')).filter(v => v !== null).join(':');
+}
+
+async function detectFps() {
+  if (!selected) return;
+  const btn = document.getElementById('fpsDetectBtn'), msg = document.getElementById('fpsDetectMsg');
+  btn.disabled = true; msg.textContent = 'Analisi in corso (può richiedere fino a un minuto)…';
+  try {
+    const res = await fetch('/api/detect_fps?source=' + selected.source + '&path=' + encodeURIComponent(selected.path));
+    const d = await res.json();
+    if (d.error) { msg.textContent = 'Errore: ' + d.error; return; }
+    const sel = document.getElementById('fps');
+    const dec = d.declared.toFixed(2), eff = d.effective.toFixed(1);
+    if (d.irregular) {
+      sel.value = '';
+      msg.textContent = `Il file dichiara ${dec} fps ma i fotogrammi distinti sono circa ${eff} al secondo, non un valore standard: lascio "Originale".`;
+    } else if (!d.suggestion) {
+      sel.value = '';
+      msg.textContent = `Nessun fotogramma ripetuto: ${dec} fps reali. Lascio "Originale".`;
+    } else {
+      const opt = [...sel.options].find(o => o.value === d.suggestion);
+      sel.value = opt ? d.suggestion : '';
+      msg.textContent = `Il file dichiara ${dec} fps ma ne ha circa ${eff} reali (${d.duplicates_pct}% di fotogrammi ripetuti). FPS impostato a ${opt ? opt.textContent : d.suggestion}.`;
+    }
+    schedulePreview();
+  } catch (e) {
+    msg.textContent = 'Errore di rete durante la verifica.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadProbe() {
+  const res = await fetch('/api/probe?source=' + selected.source + '&path=' + encodeURIComponent(selected.path));
+  const data = await res.json();
+  probeData = data;
+  const fm = document.getElementById('fpsDetectMsg'); if (fm) fm.textContent = '';
+  const v = data.video;
+  let info = `Durata: ${fmtDuration(data.duration)} — Dimensione: ${fmtBytes(data.size)}`;
+  if (v) {
+    info += `<br>Video sorgente: ${v.codec} ${v.width}x${v.height}` + (v.fps ? ` @ ${v.fps.toFixed(2)}fps` : '') +
+            (v.real_bitrate ? ` — bitrate reale: ${Math.round(v.real_bitrate/1000)} kb/s` : '') +
+            (v.declared_bitrate ? ` (dichiarato: ${Math.round(v.declared_bitrate/1000)} kb/s)` : ' (nessun bitrate dichiarato nel tag)');
+  }
+  document.getElementById('fileInfo').innerHTML = info;
+
+  const audioBox = document.getElementById('audioTracks');
+  const subBox = document.getElementById('subTracks');
+  audioBox.innerHTML = ''; subBox.innerHTML = '';
+  data.audio.forEach(a => {
+    const line = document.createElement('div');
+    line.className = 'checkline';
+    line.innerHTML = `<input type="checkbox" checked data-idx="${a.index}" class="audio-chk" onchange="schedulePreview()">
+      <label>#${a.index} ${a.language} ${a.codec} ${a.channels}ch ${a.title || ''}</label>`;
+    audioBox.appendChild(line);
+  });
+  if (!data.audio.length) audioBox.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">nessuna</span>';
+  data.subtitles.forEach(s => {
+    const line = document.createElement('div');
+    line.className = 'checkline';
+    line.innerHTML = `<input type="checkbox" checked data-idx="${s.index}" class="sub-chk" onchange="schedulePreview()">
+      <label>#${s.index} ${s.language} ${s.codec}</label>`;
+    subBox.appendChild(line);
+  });
+  if (!data.subtitles.length) subBox.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">nessuno</span>';
+  document.getElementById('streamsBox').hidden = false;
+
+  updateQualityAuto();
+  schedulePreview();
+}
+
+// CRF di default in base alla risoluzione (scala 1=max qualità...51=min).
+// Punti di riferimento scelti dall'utente il 2026-10-11 dopo misure VMAF su
+// 8 film 4K con questo encoder (hevc_qsv, look-ahead): 480p=16, 720p=18,
+// 1080p=20, 4K=22, interpolati in scala logaritmica tra una risoluzione e
+// l'altra e tenuti fissi fuori dagli estremi. (Prima: 25 a 1080p, +3 per ogni
+// raddoppio del lato = 28 a 4K, come la versione desktop: troppo compresso, es.
+// 778 kb/s su un 1080p.) Usa il lato lungo (non solo l'altezza) così un video
+// verticale (da telefono) è trattato come l'equivalente orizzontale.
+// Ordine di grandezza misurato: ogni punto di CRF in meno costa circa +25% di
+// bitrate (23->22 su 4K: 3,05 -> 3,82 Mbps).
+const CRF_PUNTI = [[854, 16], [1280, 18], [1920, 20], [3840, 22]];
+function crfSuggerito(width, height, codec) {
+  const lato = Math.max(width || 0, height || 0);
+  let base;
+  if (lato <= 0) base = 20;
+  else if (lato <= CRF_PUNTI[0][0]) base = CRF_PUNTI[0][1];
+  else if (lato >= CRF_PUNTI[CRF_PUNTI.length - 1][0]) base = CRF_PUNTI[CRF_PUNTI.length - 1][1];
+  else {
+    for (let i = 1; i < CRF_PUNTI.length; i++) {
+      if (lato <= CRF_PUNTI[i][0]) {
+        const [x0, y0] = CRF_PUNTI[i - 1], [x1, y1] = CRF_PUNTI[i];
+        base = y0 + (y1 - y0) * Math.log(lato / x0) / Math.log(x1 / x0);
+        break;
+      }
+    }
+  }
+  // AV1 e' generalmente un po' piu' efficiente di HEVC: stessa qualita'
+  // percepita con un CRF numericamente piu' alto. Nessun encoder AV1 e'
+  // disponibile oggi su questa istanza (AVAILABLE_ENCODERS in app.py).
+  if ((codec || '').startsWith('av1')) base += 1;
+  // Stesso range 16-32 dello slider.
+  return Math.max(16, Math.min(32, Math.round(base)));
+}
+
+// Ricalcola il CRF proposto sul file/codec correnti, ma solo se l'utente non
+// lo ha gia' modificato a mano (qualityManual) - in tal caso resta bloccato
+// finche' non si preme "Auto". updatingQualityAuto distingue la scrittura
+// automatica del campo da una modifica reale dell'utente nello stesso handler.
+function updateQualityAuto() {
+  if (qualityManual) return;
+  const v = probeData && probeData.video;
+  if (!v || !v.width || !v.height) return;
+  const codec = document.getElementById('codec').value;
+  const val = crfSuggerito(v.width, v.height, codec);
+  updatingQualityAuto = true;
+  document.getElementById('quality').value = val;
+  document.getElementById('qualityLabel').textContent = val;
+  updatingQualityAuto = false;
+}
+
+function onQualityInput() {
+  if (!updatingQualityAuto) {
+    qualityManual = true;
+    document.getElementById('qualityAutoState').textContent = 'manuale';
+    document.getElementById('qualityAutoBtn').style.display = 'inline-block';
+  }
+  document.getElementById('qualityLabel').textContent = document.getElementById('quality').value;
+  schedulePreview();
+}
+
+function resetQualityAuto() {
+  qualityManual = false;
+  document.getElementById('qualityAutoState').textContent = 'automatica';
+  document.getElementById('qualityAutoBtn').style.display = 'none';
+  updateQualityAuto();
+  schedulePreview();
+}
+
+function onAudioOnlyChange() {
+  const audioOnly = document.getElementById('audioOnly').checked;
+  document.querySelectorAll('.video-only-group').forEach(el => {
+    el.style.opacity = audioOnly ? 0.4 : 1;
+    el.style.pointerEvents = audioOnly ? 'none' : 'auto';
+  });
+  // Un file solo-audio non puo avere sottotitoli
+  document.getElementById('subsModeField').hidden = audioOnly;
+  document.getElementById('subTracks').closest('.streams-col').hidden = audioOnly;
+  schedulePreview();
+}
+
+function collectOpts() {
+  const audioIndices = Array.from(document.querySelectorAll('.audio-chk:checked')).map(c => parseInt(c.dataset.idx));
+  const subIndices = Array.from(document.querySelectorAll('.sub-chk:checked')).map(c => parseInt(c.dataset.idx));
+  const allAudio = document.querySelectorAll('.audio-chk').length;
+  const allSubs = document.querySelectorAll('.sub-chk').length;
+  return {
+    source: selected.source,
+    path: selected.path,
+    audio_only: document.getElementById('audioOnly').checked,
+    audio_index: audioIndices[0] || 0,
+    codec: document.getElementById('codec').value,
+    quality: parseInt(document.getElementById('quality').value),
+    look_ahead: document.getElementById('lookAhead').checked,
+    resolution_cap: document.getElementById('resCap').value ? parseInt(document.getElementById('resCap').value) : null,
+    fps: document.getElementById('fps').value || null,
+    flip: document.getElementById('flip').value || null,
+    container: document.getElementById('container').value,
+    audio_mode: document.getElementById('audioMode').value,
+    audio_bitrate: document.getElementById('audioBitrate').value || null,
+    audio_indices: audioIndices.length === allAudio ? null : audioIndices,
+    sub_indices: subIndices.length === allSubs ? null : subIndices,
+    subs_mode: document.getElementById('subsMode').value,
+    start: document.getElementById('trimStart').value || null,
+    duration: document.getElementById('trimDuration').value || null,
+    preset: document.getElementById('preset').value || null,
+    ar_mode: document.getElementById('arMode').value,
+    ar_ratio: document.getElementById('arRatio').value || null,
+  };
+}
+
+function schedulePreview() {
+  if (!selected) return;
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(updatePreview, 350);
+}
+
+let framePreviewUrl = null;
+
+async function updatePreview() {
+  const opts = collectOpts();
+
+  const res = await fetch('/api/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  });
+  const data = await res.json();
+  document.getElementById('cmdPreview').textContent = '$ ' + (data.cmd || data.error || '');
+
+  const img = document.getElementById('framePreview');
+  if (opts.audio_only || !opts.ar_mode || opts.ar_mode === 'none') {
+    img.hidden = true;
+    return;
+  }
+  try {
+    const fres = await fetch('/api/frame_preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    if (!fres.ok) { img.hidden = true; return; }
+    const blob = await fres.blob();
+    if (framePreviewUrl) URL.revokeObjectURL(framePreviewUrl);
+    framePreviewUrl = URL.createObjectURL(blob);
+    img.src = framePreviewUrl;
+    img.hidden = false;
+  } catch (e) {
+    img.hidden = true;
+  }
+}
+
+function startEncode() {
+  if (!selected) return;
+  runJob(collectOpts());
+}
+
+function runMaintenance(mode) {
+  if (!selected) return;
+
+  if (mode === 'fix_bitrate') {
+    const v = probeData && probeData.video;
+    const real = v && v.real_bitrate;
+    const declared = v && v.declared_bitrate;
+    if (!real) {
+      alert('Impossibile calcolare il bitrate reale di questo file.');
+      return;
+    }
+    if (declared) {
+      const diffPct = Math.abs(real - declared) / declared * 100;
+      const realKb = Math.round(real / 1000), declKb = Math.round(declared / 1000);
+      if (diffPct <= 10) {
+        alert(`Il tag è già accurato: dichiarato ${declKb} kb/s, reale ${realKb} kb/s ` +
+              `(differenza ${diffPct.toFixed(1)}%, entro la normale variazione VBR). Nessuna correzione necessaria.`);
+        return;
+      }
+      const ok = confirm(`Bitrate dichiarato nel tag: ${declKb} kb/s\nBitrate reale calcolato: ${realKb} kb/s\n` +
+                          `Differenza: ${diffPct.toFixed(1)}%\n\nCorreggere il tag con il valore reale?`);
+      if (!ok) return;
+    } else {
+      const ok = confirm(`Il file non ha nessun bitrate dichiarato nel tag.\nBitrate reale calcolato: ${Math.round(real/1000)} kb/s.\n\nScrivere il tag?`);
+      if (!ok) return;
+    }
+  }
+
+  runJob({ source: selected.source, path: selected.path, mode: mode });
+}
+
+function runJob(opts) {
+  document.getElementById('encodeBtn').disabled = true;
+  document.getElementById('statusMsg').textContent = '';
+  document.getElementById('downloadBtn').style.display = 'none';
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('log').textContent = '';
+  currentJobId = null;
+  const stopBtn = document.getElementById('stopBtn');
+  stopBtn.style.display = 'block';
+  stopBtn.disabled = false;
+
+  fetch('/api/encode', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  }).then(r => r.json()).then(data => {
+    if (data.error) {
+      document.getElementById('statusMsg').textContent = data.error;
+      document.getElementById('statusMsg').className = 'status-msg err';
+      document.getElementById('encodeBtn').disabled = false;
+      stopBtn.style.display = 'none';
+      return;
+    }
+    currentJobId = data.job_id;
+    pollStatus(data.job_id);
+  });
+}
+
+function stopEncode() {
+  if (!currentJobId) return;
+  const stopBtn = document.getElementById('stopBtn');
+  stopBtn.disabled = true;
+  fetch('/api/stop/' + currentJobId, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) stopBtn.disabled = false;
+    });
+}
+
+function pollStatus(jobId) {
+  pollTimer = setInterval(async () => {
+    const res = await fetch('/api/status/' + jobId);
+    const data = await res.json();
+    document.getElementById('progressBar').style.width = data.progress + '%';
+    document.getElementById('progressLabel').textContent = data.progress + '%';
+    document.getElementById('log').textContent = data.log.join('\n');
+    document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
+
+    if (data.status === 'done') {
+      clearInterval(pollTimer);
+      let msg = 'Conversione completata.';
+      if (data.output_bitrate) msg += ` Bitrate output: ${Math.round(data.output_bitrate/1000)} kb/s.`;
+      if (data.output_size) msg += ` Dimensione: ${fmtBytes(data.output_size)}.`;
+      document.getElementById('statusMsg').textContent = msg;
+      document.getElementById('statusMsg').className = 'status-msg ok';
+      const dl = document.getElementById('downloadBtn');
+      dl.href = '/api/download/' + jobId;
+      dl.style.display = 'block';
+      const outPreview = document.getElementById('outputPreview');
+      outPreview.src = '/api/play/' + jobId;
+      outPreview.hidden = false;
+      document.getElementById('encodeBtn').disabled = false;
+      document.getElementById('stopBtn').style.display = 'none';
+    } else if (data.status === 'error') {
+      clearInterval(pollTimer);
+      document.getElementById('statusMsg').textContent = 'Errore durante la conversione, controlla il log.';
+      document.getElementById('statusMsg').className = 'status-msg err';
+      document.getElementById('encodeBtn').disabled = false;
+      document.getElementById('stopBtn').style.display = 'none';
+    } else if (data.status === 'cancelled') {
+      clearInterval(pollTimer);
+      document.getElementById('statusMsg').textContent = 'Conversione interrotta.';
+      document.getElementById('statusMsg').className = 'status-msg err';
+      document.getElementById('encodeBtn').disabled = false;
+      document.getElementById('stopBtn').style.display = 'none';
+    }
+  }, 1500);
+}
+
+// Riaggancia un lavoro gia' in corso (pagina richiusa/riaperta o altro PC)
+fetch('/api/jobs').then(r => r.json()).then(list => {
+  if (!list.length) return;
+  const j = list[0];
+  currentJobId = j.job_id;
+  document.getElementById('optionsCard').hidden = false;
+  document.getElementById('encodeBtn').disabled = true;
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('statusMsg').textContent = 'Conversione in corso: ' + j.src + ' → ' + j.out_name +
+    (list.length > 1 ? ` (+${list.length - 1} altre)` : '');
+  document.getElementById('statusMsg').className = 'status-msg';
+  const stopBtn = document.getElementById('stopBtn');
+  stopBtn.style.display = 'block';
+  stopBtn.disabled = false;
+  pollStatus(j.job_id);
+}).catch(() => {});
+
+loadEncoders();
+loadDir("");
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+services:
+  mediaforge-web:
+    build: .
+    image: mediaforge-web:local
+    container_name: mediaforge-web
+    restart: unless-stopped
+    user: "1000:1000"
+    group_add:
+      - "993"
+    ports:
+      - "5050:5050"
+    volumes:
+      - /home/francesco/hdd-live:/library/hdd-live
+      - /home/francesco/mediaforge-library:/library/gaia
+      - ./data/uploads:/data/uploads
+      - /home/francesco/hdd-live/francesco/mediaforge-output:/data/output
+    devices:
+      - /dev/dri:/dev/dri
