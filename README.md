@@ -36,7 +36,8 @@ ffmpeg comes from the `jellyfin-ffmpeg7` package installed by the `Dockerfile`.
 ## Update
 
 `./deploy.sh` in the project folder on the server pulls from GitHub and rebuilds the container (it refuses to run
-while a conversion is in progress). For the in-page "Aggiorna ora" button, add to the server's crontab:
+while a conversion is in progress). To update automatically every night, run `auto-update.sh` from cron (`0 4 * * * /path/to/mediaforge-web/auto-update.sh`):
+it deploys only when GitHub has a newer commit and nothing is being converted. For the in-page "Aggiorna ora" button, add to the server's crontab:
 
 ```
 * * * * * /path/to/mediaforge-web/update-watcher.sh

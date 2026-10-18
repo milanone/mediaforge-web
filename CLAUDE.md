@@ -35,6 +35,12 @@ has no Docker access, so `/api/update` just writes `updates/request` (folder `./
 `* * * * * /home/francesco/docker/mediaforge-web/update-watcher.sh`. The endpoint is unauthenticated like the rest
 of the app: it can only trigger an update to what is on GitHub `main`, and it refuses while a conversion runs.
 
+Installed on gaia (2026-10-18): a nightly cron, `0 4 * * * /home/francesco/docker/mediaforge-web/auto-update.sh`, which
+runs `deploy.sh` only when GitHub `main` differs from the commit the container was built from (`deploy.sh` refuses
+while a conversion runs: it just tries again the next night; log in `updates/auto-update.log`). The per-minute
+`update-watcher.sh` for the in-page "Aggiorna ora" button is NOT installed (polling every minute was rejected), so
+that button stays hidden and the banner shows the manual command.
+
 Safer first time for a big change: build a copy as `mediaforge-web:test` on port 5051 with its own library folder,
 try it, then deploy. Rollback: `docker tag mediaforge-web:backup-20261018 mediaforge-web:local && docker compose up -d`
 in that folder (that tag and `/home/francesco/docker/mediaforge-web.bak-20261018` hold the pre-clone version).
