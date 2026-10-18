@@ -740,7 +740,6 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
                     return
 
             if dst_path.exists():
-                job["status"] = "done"
                 if partial:
                     job["partial"] = True
                     job["log"].append("Fermata su richiesta: file parziale conservato.")
@@ -749,6 +748,8 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
                 out_duration = float(ffprobe_json(dst_path).get("format", {}).get("duration") or 0) or duration
                 job["output_bitrate"] = real_video_bitrate(dst_path, out_duration)
                 job["output_size"] = dst_path.stat().st_size
+                # last: the status poll must not see "done" before bitrate/size are set
+                job["status"] = "done"
             else:
                 job["status"] = "error"
             return
