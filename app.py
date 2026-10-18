@@ -1,4 +1,5 @@
 import json
+import os
 import queue
 import re
 import subprocess
@@ -9,12 +10,14 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory, abort, Response
 
-FFMPEG = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
-FFPROBE = "/usr/lib/jellyfin-ffmpeg/ffprobe"
+# Overridable by environment so the module can be imported and tested outside
+# the container (the defaults are the paths inside the Docker image).
+FFMPEG = os.environ.get("MEDIAFORGE_FFMPEG", "/usr/lib/jellyfin-ffmpeg/ffmpeg")
+FFPROBE = os.environ.get("MEDIAFORGE_FFPROBE", "/usr/lib/jellyfin-ffmpeg/ffprobe")
 
-LIBRARY_DIR = Path("/library")
-UPLOAD_DIR = Path("/data/uploads")
-OUTPUT_DIR = Path("/data/output")
+LIBRARY_DIR = Path(os.environ.get("MEDIAFORGE_LIBRARY", "/library"))
+UPLOAD_DIR = Path(os.environ.get("MEDIAFORGE_UPLOADS", "/data/uploads"))
+OUTPUT_DIR = Path(os.environ.get("MEDIAFORGE_OUTPUT", "/data/output"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

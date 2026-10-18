@@ -14,7 +14,7 @@ served by Flask in Docker on `gaia` (home server, Intel N150 iGPU).
 ## Deployment
 
 The running copy lives in `/home/francesco/docker/mediaforge-web` on gaia (container `mediaforge-web`, port 5050).
-Until a deploy script exists, gaia gets files by hand; the repo was imported from there on 2026-10-18
+Until a deploy script exists, gaia gets files by hand (ask the user before every deploy: it restarts a service in use); the repo was imported from there on 2026-10-18
 (commit "Import the version running on gaia"). Never edit on gaia without bringing the change back here.
 The GPU path can only be verified on gaia (Linux `-hwaccel qsv`), not on Windows.
 
@@ -25,8 +25,29 @@ Engine rules must match: default CRF curve (`crf` points in `index.html`), QSV p
 Deliberately different: GPU path (`-hwaccel qsv` here, `d3d11va` + `hwmap` on Windows), encoders (QSV/x265 only here),
 no Mux/Chapters tabs, jobs/library/upload/download.
 
+## Parity with the sibling app (desktop <-> web)
+
+`MediaForge` (desktop, `../MediaForge`) and `mediaforge-web` (`../mediaforge-web`, Docker on gaia) are separate
+codebases that must keep the same encoding rules. Status as of 2026-10-18; `mediaforge-web/tests/test_parity.py`
+enforces the "same" rows.
+
+| Rule | Desktop | Web | Status |
+|---|---|---|---|
+| Default CRF by resolution (QSV) | `QSV_CRF_POINTS` | `CRF_PUNTI` in `index.html` | same (tested through node) |
+| QSV presets | 3 levels, `hevc_qsv` only | 3 levels | same |
+| GPU decode gating | `HW_DECODE_*` | `HW_DECODE_*` | same, web also allows `mjpeg` (Linux QSV decoder) |
+| FPS check (mpdecimate on 5 clips) | `fps_contenuto()` | `detect_fps()` | same method; desktop adds a timestamp (VFR) check |
+| Stats tags cleared, `ENCODING_SETTINGS` | yes | yes | same |
+| Target bitrate, 2-pass, stop-and-keep | yes | no | to port to the web |
+| `hw_accel` per-job switch, output bitrate/size after encode | no | yes | to port to the desktop |
+| GPU path | `d3d11va` + `hwmap` | `-hwaccel qsv` | different on purpose (platform) |
+| Encoders | QSV, AMF, NVENC, VideoToolbox, x265, SVT-AV1 | QSV, x265 | different on purpose |
+| Mux, Chapters, batch folder / library, upload, background jobs | desktop only / web only | | different on purpose |
+
+When you change a "same" rule on one side, change the other and run both test suites.
+
 ## Conventions
 
 - Code and the repo in English; the existing code still has Italian comments and UI text (translate only when asked)
 - Surgical, non-destructive edits; do not rename existing functions without a request
-- Tests: `py -m unittest discover -s tests -v` (none yet)
+- Tests: `py -m unittest discover -s tests -v` (parity with the desktop app; needs `pip install flask`, node for the CRF check)
