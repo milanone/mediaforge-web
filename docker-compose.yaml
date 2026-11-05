@@ -16,6 +16,7 @@ services:
     volumes:
       - /home/francesco/hdd-live:/library/hdd-live
       - /home/francesco/mediaforge-library:/library/gaia
+      - /home/francesco/torrent-downloads:/library/torrent-downloads
       - ./data/uploads:/data/uploads
       - ./updates:/data/updates
       - /home/francesco/hdd-live/francesco/mediaforge-output:/data/output

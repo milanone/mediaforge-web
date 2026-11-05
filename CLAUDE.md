@@ -9,7 +9,7 @@ served by Flask in Docker on `gaia` (home server, Intel N150 iGPU).
   QSV decode/scale path), `run_encode()` / `run_ffmpeg_watchdog()` (jobs in memory, stall watchdog, software
   retry), `detect_fps()`, maintenance remux, REST routes under `/api/`
 - `static/index.html` — the whole UI (vanilla JS, no build step)
-- `Dockerfile` (ubuntu 24.04 + `jellyfin-ffmpeg7`), `docker-compose.yaml` (paths of the author's server)
+- `Dockerfile` (ubuntu 24.04 + `jellyfin-ffmpeg7`), `docker-compose.yaml` (paths of the author's server; the library shown in the page is `/library`, with the mounts `hdd-live`, `gaia` (`/home/francesco/mediaforge-library`) and `torrent-downloads` (`/home/francesco/torrent-downloads`, written by the Transmission container: `complete/` and `incomplete/`). Mounts are read-write because the output is written next to the source file)
 
 ## Deployment
 
