@@ -605,6 +605,72 @@ def build_postmux_subs_cmd(encoded_path: Path, src: Path, probe: dict, opts: dic
 
 TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 
+# ffmpeg's progress line, e.g.
+#   frame=23183 fps= 54 q=-0.0 size=  257792KiB time=00:16:05.79 bitrate=2186.6kbits/s speed=2.27x
+# fps = encoding speed (frames per second of work), speed = media seconds per second of work (fps / source fps),
+# bitrate = cumulative average since the start (size / time), q = quantizer, "-0.0" = not reported (hardware encoders,
+# libx265): not shown. Fields can be "N/A" (e.g. size with the null muxer).
+_FIELD_RE = re.compile(r"(frame|fps|size|Lsize|time|bitrate|speed)=\s*(\S+)")
+_SIZE_RE = re.compile(r"([\d.]+)\s*(B|kB|KiB|mB|MiB|gB|GiB)")
+_SIZE_MULT = {"B": 1, "kB": 1024, "KiB": 1024, "mB": 1024 ** 2, "MiB": 1024 ** 2, "gB": 1024 ** 3, "GiB": 1024 ** 3}
+HISTORY_STEP = 10       # seconds between the samples kept for the charts
+HISTORY_MAX = 4000      # about 11 hours of job
+
+
+def parse_progress_line(line):
+    """Numbers of an ffmpeg progress line as a dict (frame, fps, size_bytes, time_s, bitrate_kbps, speed; None when
+    "N/A"), or None if the line is not a progress line."""
+    if "frame=" not in line or "time=" not in line:
+        return None
+    raw = {k: v for k, v in _FIELD_RE.findall(line)}
+    out = {"frame": None, "fps": None, "size_bytes": None, "time_s": None, "bitrate_kbps": None, "speed": None}
+    try:
+        if raw.get("frame", "N/A") != "N/A":
+            out["frame"] = int(raw["frame"])
+        if raw.get("fps", "N/A") != "N/A":
+            out["fps"] = float(raw["fps"])
+        size = raw.get("size") or raw.get("Lsize")
+        m = _SIZE_RE.fullmatch(size) if size else None
+        if m:
+            out["size_bytes"] = int(float(m.group(1)) * _SIZE_MULT[m.group(2)])
+        m = TIME_RE.fullmatch("time=" + raw["time"]) if raw.get("time") else None
+        if m:
+            h, mnt, sec, frac = m.groups()
+            out["time_s"] = int(h) * 3600 + int(mnt) * 60 + int(sec) + float("0." + frac)
+        b = raw.get("bitrate", "")
+        if b.endswith("kbits/s"):
+            out["bitrate_kbps"] = float(b[:-7])
+        sp = raw.get("speed", "")
+        if sp.endswith("x") and sp[:-1] not in ("", "N/A"):
+            out["speed"] = float(sp[:-1])
+    except (ValueError, KeyError):
+        return None
+    return out
+
+
+def record_progress(job, st):
+    """Keep the latest numbers in job["stats"] and, every HISTORY_STEP seconds, a sample in job["history"]
+    (for the charts). The instantaneous bitrate is measured on the last ~20 s because ffmpeg's own "bitrate" is
+    the average since the start and the output size grows in coarse steps."""
+    job["stats"] = st
+    now = time.time()
+    if now - job.get("_hist_t", 0) < HISTORY_STEP:
+        return
+    hist = job.setdefault("history", [])
+    if len(hist) >= HISTORY_MAX:
+        return
+    job["_hist_t"] = now
+    inst = None
+    ref = next((h for h in reversed(hist[-3:]) if h.get("pass") == job.get("pass_no", 1)), None)
+    ref = hist[-3] if len(hist) >= 3 and hist[-3].get("pass") == job.get("pass_no", 1) else ref
+    if ref and st["time_s"] is not None and st["size_bytes"] is not None and ref.get("size") is not None:
+        dt = st["time_s"] - ref["time_s"]
+        if dt > 1:
+            inst = (st["size_bytes"] - ref["size"]) * 8 / dt / 1000
+    hist.append({"t": round(now - job.get("started_at", now), 1), "pass": job.get("pass_no", 1),
+                 "time_s": st["time_s"], "fps": st["fps"], "speed": st["speed"],
+                 "avg_kbps": st["bitrate_kbps"], "inst_kbps": inst, "size": st["size_bytes"]})
+
 STALL_TIMEOUT = 8.0  # secondi senza che "time=" avanzi prima di considerare lo stallo
 
 
@@ -703,6 +769,10 @@ def run_ffmpeg_watchdog(cmd, job, duration, watch_gpu=False) -> str:
                 h, mnt, s, frac = m.groups()
                 cur = int(h) * 3600 + int(mnt) * 60 + int(s) + float("0." + frac)
                 job["progress"] = max(0, min(100, round(cur / duration * 100, 1)))
+        stats = parse_progress_line(line)
+        if stats:
+            record_progress(job, stats)
+            continue
         job["log"].append(line)
         job["log"] = job["log"][-300:]
         if watch_gpu and not job.get("gpu_warning") and any(pat in line for pat in GPU_DECODE_ERRORS):
@@ -756,6 +826,7 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
             shutil.rmtree(pass_dir, ignore_errors=True)
             return
         job["log"].append("Passata 2/2 (codifica)")
+        job["pass_no"] = 2
         job["progress"] = 0
         opts = dict(opts, pass_num=2)
 
@@ -1264,7 +1335,7 @@ def encode():
     jobs[job_id] = {
         "status": "running", "progress": 0, "log": [],
         "src": str(src_path), "out_name": out_name, "dst": str(dst_path),
-        "output_bitrate": None, "output_size": None,
+        "output_bitrate": None, "output_size": None, "started_at": time.time(),
     }
 
     t = threading.Thread(target=run_encode, args=(job_id, src_path, dst_path, data, probe), daemon=True)
@@ -1293,6 +1364,11 @@ def status(job_id):
         "output_size": job.get("output_size"),
         "partial": bool(job.get("partial")),
         "gpu_warning": bool(job.get("gpu_warning")),
+        "duration": job.get("duration"),
+        "stats": job.get("stats"),
+        # only the samples the page does not have yet (?h=<how many it has>)
+        "history": job.get("history", [])[request.args.get("h", 0, type=int):],
+        "history_total": len(job.get("history", [])),
     })
 
 

@@ -123,6 +123,14 @@
     padding: 6px 12px; cursor: pointer; font-size: 0.82rem;
   }
   .preview-warnings { color: #ffb066; font-size: 0.8rem; margin-top: 6px; white-space: pre-line; }
+  .progress-stats { font-size: 0.82rem; color: var(--text); margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+  .progress-stats span { color: var(--muted); }
+  .charts { margin-top: 12px; }
+  .charts summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; }
+  .chart-box { margin-top: 8px; }
+  .chart-title { font-size: 0.78rem; color: var(--muted); display: flex; justify-content: space-between; }
+  .chart-title b { color: var(--text); font-weight: 600; }
+  .chart-box canvas { width: 100%; height: 70px; display: block; background: var(--bg); border-radius: 6px; }
   .footer { color: var(--muted); font-size: 0.75rem; text-align: center; margin-top: 24px; }
   .footer button {
     background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px;
@@ -347,6 +355,7 @@
     <div class="progress-wrap" id="progressWrap">
       <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
       <div class="progress-label" id="progressLabel">In corso...</div>
+      <div class="progress-stats" id="progressStats"></div>
       <button class="primary" id="stopBtn" style="background:var(--err); display:none" onclick="stopEncode()">Interrompi</button>
       <button class="primary" id="finishBtn" style="background:var(--muted); display:none; margin-top:6px" onclick="finishEncode()">Ferma e tieni il file parziale</button>
       <div class="warn-box" id="gpuWarning" hidden style="flex-direction:column; align-items:stretch; margin-top:12px">
@@ -358,6 +367,12 @@
           <button type="button" onclick="retrySoftware()">Riprova in software (lento)</button>
         </div>
       </div>
+      <details class="charts" id="chartsBox" hidden open>
+        <summary>Andamento della codifica</summary>
+        <div class="chart-box"><div class="chart-title"><span>Velocità di codifica (fotogrammi al secondo)</span><b id="chartFpsNow"></b></div><canvas id="chartFps"></canvas></div>
+        <div class="chart-box"><div class="chart-title"><span>Velocità rispetto al tempo reale (x)</span><b id="chartSpeedNow"></b></div><canvas id="chartSpeed"></canvas></div>
+        <div class="chart-box"><div class="chart-title"><span>Bitrate del video (kb/s): <i style="color:var(--accent)">istantaneo</i> · <i>medio</i></span><b id="chartBitrateNow"></b></div><canvas id="chartBitrate"></canvas></div>
+      </details>
       <div class="log" id="log"></div>
     </div>
 
@@ -912,6 +927,7 @@ function runJob(opts) {
   document.getElementById('downloadBtn').style.display = 'none';
   document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('log').textContent = '';
+  resetStats();
   currentJobId = null;
   const stopBtn = document.getElementById('stopBtn');
   showStop(true);
@@ -945,6 +961,75 @@ function updateTwoPassVisibility() {
   const sw = document.getElementById('codec').value === 'libx265';
   document.getElementById('twoPassLabel').style.display = sw ? 'inline-block' : 'none';
 }
+
+// Live numbers next to the bar and charts of the encode (data parsed from ffmpeg's progress lines on the server)
+let histSeries = [], histCount = 0;
+function resetStats() {
+  histSeries = []; histCount = 0;
+  document.getElementById('progressStats').textContent = '';
+  document.getElementById('chartsBox').hidden = true;
+}
+function fmtClock(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+}
+function fmtEta(sec) {
+  if (sec < 90) return Math.round(sec) + ' s';
+  if (sec < 5400) return Math.round(sec / 60) + ' min';
+  return (sec / 3600).toFixed(1).replace('.', ',') + ' h';
+}
+function renderStats(data) {
+  const st = data.stats, box = document.getElementById('progressStats');
+  if (!st || st.time_s == null) return;
+  const parts = [];
+  if (st.frame != null) parts.push(`<span>frame</span> ${st.frame.toLocaleString('it-IT')}`);
+  parts.push(`<span>tempo</span> ${fmtClock(st.time_s)}` + (data.duration ? ` / ${fmtClock(data.duration)}` : ''));
+  if (st.size_bytes != null) parts.push(`<span>dimensione</span> ${fmtBytes(st.size_bytes)}`);
+  if (data.status === 'running' && data.duration && st.speed > 0)
+    parts.push(`<span>rimanente</span> ~${fmtEta((data.duration - st.time_s) / st.speed)}`);
+  box.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+}
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
+// one tiny line chart on a canvas: series = [{key, color, width}], x = elapsed time of the job
+function drawChart(canvasId, nowId, series, unit, decimals) {
+  const cv = document.getElementById(canvasId), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, hgt = cv.clientHeight;
+  if (!w) return;
+  cv.width = w * dpr; cv.height = hgt * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, hgt);
+  const pts = histSeries;
+  const vals = [];
+  series.forEach(s => pts.forEach(p => { if (p[s.key] != null) vals.push(p[s.key]); }));
+  if (pts.length < 2 || !vals.length) return;
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+  const pad = (hi - lo) * 0.1; lo = Math.max(0, lo - pad); hi += pad;
+  const x0 = pts[0].t, x1 = pts[pts.length - 1].t || 1, L = 38, R = 6, T = 6, B = 6;
+  const X = t => L + (t - x0) / Math.max(1e-9, x1 - x0) * (w - L - R);
+  const Y = v => T + (1 - (v - lo) / (hi - lo)) * (hgt - T - B);
+  g.font = '10px sans-serif'; g.fillStyle = cssVar('--muted'); g.strokeStyle = cssVar('--border'); g.lineWidth = 1;
+  [lo, (lo + hi) / 2, hi].forEach(v => { g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.stroke(); g.fillText(v.toFixed(decimals), 2, Y(v) + 3); });
+  pts.forEach((p, i) => { if (i && p.pass !== pts[i - 1].pass) { g.beginPath(); g.setLineDash([3, 3]); g.moveTo(X(p.t), T); g.lineTo(X(p.t), hgt - B); g.stroke(); g.setLineDash([]); } });
+  series.forEach(s => {
+    g.strokeStyle = cssVar(s.color); g.lineWidth = s.width; g.beginPath();
+    let started = false;
+    pts.forEach(p => { if (p[s.key] == null) return; const x = X(p.t), y = Y(p[s.key]); if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; } });
+    g.stroke();
+  });
+  const mainKey = series[0].key, mv = pts.map(p => p[mainKey]).filter(v => v != null);
+  const avg = mv.reduce((a, b) => a + b, 0) / mv.length;
+  document.getElementById(nowId).textContent =
+    `ora ${mv[mv.length - 1].toFixed(decimals)} ${unit} · media ${avg.toFixed(decimals)} · min ${Math.min(...mv).toFixed(decimals)} · max ${Math.max(...mv).toFixed(decimals)}`;
+}
+function renderCharts() {
+  if (histSeries.length < 2) return;
+  document.getElementById('chartsBox').hidden = false;
+  drawChart('chartFps', 'chartFpsNow', [{ key: 'fps', color: '--accent', width: 1.6 }], 'fps', 0);
+  drawChart('chartSpeed', 'chartSpeedNow', [{ key: 'speed', color: '--accent', width: 1.6 }], 'x', 2);
+  drawChart('chartBitrate', 'chartBitrateNow', [{ key: 'inst_kbps', color: '--accent', width: 1.6 }, { key: 'avg_kbps', color: '--muted', width: 1.2 }], 'kb/s', 0);
+}
+window.addEventListener('resize', renderCharts);
 
 // GPU decoder warning: continue anyway / stop / redo everything in software
 let gpuWarnDismissed = false;
@@ -992,8 +1077,10 @@ function stopEncode() {
 
 function pollStatus(jobId) {
   pollTimer = setInterval(async () => {
-    const res = await fetch('/api/status/' + jobId);
+    const res = await fetch('/api/status/' + jobId + '?h=' + histCount);
     const data = await res.json();
+    if (data.history && data.history.length) { histSeries = histSeries.concat(data.history); histCount = data.history_total; renderCharts(); }
+    renderStats(data);
     document.getElementById('progressBar').style.width = data.progress + '%';
     document.getElementById('progressLabel').textContent = data.progress + '%';
     document.getElementById('gpuWarning').hidden = !(data.gpu_warning && data.status === 'running' && !gpuWarnDismissed);

@@ -20,6 +20,7 @@ encoding rules, different plumbing (files on the server, jobs in the background,
 - "Ferma e tieni il file parziale": closes the running encode cleanly (ffmpeg `q`) and keeps a playable partial file
 - Version in the footer ("aggiornata" / "nuova versione disponibile"), a "Controlla aggiornamenti" button and an
   "Aggiorna ora" button (needs the cron watcher below; otherwise the banner shows the manual command)
+- Live numbers (frame, time, size, time remaining) next to the progress bar and charts of encoding fps, speed and bitrate
 - Background jobs that survive closing the page (reattach from any browser)
 - Maintenance remux (no re-encode): fix the `hvc1` tag, fix a stale bitrate tag
 

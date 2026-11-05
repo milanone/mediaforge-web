@@ -41,6 +41,13 @@ while a conversion runs: it just tries again the next night; log in `updates/aut
 `update-watcher.sh` for the in-page "Aggiorna ora" button is NOT installed (polling every minute was rejected), so
 that button stays hidden and the banner shows the manual command.
 
+Live numbers and charts: `parse_progress_line()` reads ffmpeg's progress line (`frame= fps= q= size= time= bitrate= speed=`) in
+`run_ffmpeg_watchdog`; the latest values go to `job["stats"]` and every 10 s a sample to `job["history"]` (instantaneous bitrate
+over the last ~20 s, since ffmpeg's `bitrate` is the average since the start; `pass` tells 2-pass runs apart). Progress lines no
+longer fill the log. `/api/status/<id>?h=N` returns only the samples after the first N, so the polling stays light. The page shows
+frame / time / size / ETA next to the bar and three canvas charts (fps, speed vs real time, bitrate), no library. `q` is not shown:
+it is `-0.0` (not reported) with QSV and x265.
+
 GPU decoder warning: if ffmpeg prints a line of `GPU_DECODE_ERRORS` (the decoder is dropping frames but ffmpeg would
 still exit with 0), `run_ffmpeg_watchdog(watch_gpu=True)` raises `job["gpu_warning"]` and does NOT stop anything: software
 encoding on gaia is very slow, so the page asks the user (continue / stop / `/api/retry_software` = redo everything
