@@ -1075,11 +1075,18 @@ function stopEncode() {
     });
 }
 
+let pollBusy = false;   // one request at a time: a slow answer must not be overtaken by the next tick
 function pollStatus(jobId) {
   pollTimer = setInterval(async () => {
+    if (pollBusy) return;
+    pollBusy = true;
+    try {
     const res = await fetch('/api/status/' + jobId + '?h=' + histCount);
     const data = await res.json();
-    if (data.history && data.history.length) { histSeries = histSeries.concat(data.history); histCount = data.history_total; renderCharts(); }
+    // append only the samples that follow the ones already held (a duplicated answer would draw a line back to the start)
+    if (data.history && data.history.length) {
+      histSeries = histSeries.concat(data.history); histCount = data.history_total; renderCharts();
+    }
     renderStats(data);
     document.getElementById('progressBar').style.width = data.progress + '%';
     document.getElementById('progressLabel').textContent = data.progress + '%';
@@ -1116,6 +1123,11 @@ function pollStatus(jobId) {
       document.getElementById('statusMsg').className = 'status-msg err';
       document.getElementById('encodeBtn').disabled = false;
       showStop(false);
+    }
+    } catch (e) {
+      // a failed request (server restarting, network): try again at the next tick
+    } finally {
+      pollBusy = false;
     }
   }, 1500);
 }

@@ -6,6 +6,10 @@ resolution, FPS, aspect ratio, audio and subtitles, and the server re-encodes it
 using the Intel iGPU (QuickSync) when available. It is the sibling of the desktop app: same
 encoding rules, different plumbing (files on the server, jobs in the background, download of the result).
 
+![MediaForge Web: library, encoding options, live progress with fps, speed and bitrate charts](screenshot.png)
+
+*Screenshot generated from the running page with sample files and synthetic progress data (the QSV encoders are those of the author's server).*
+
 ## Features
 
 - Source from a mounted library or upload; output to a mounted folder, plus download and in-browser playback
