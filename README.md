@@ -18,7 +18,7 @@ encoding rules, different plumbing (files on the server, jobs in the background,
   retry in software if the GPU path fails or stalls; 3 real preset levels (fast / normal / slow)
 - Default CRF follows the output resolution (480p=16, 720p=18, 1080p=20, 4K=22), measured with VMAF on 4K films;
   a 4K source scaled down gets CRF 16 (the detailed scenes lose most of their fine detail at higher values)
-- "Prevedi bitrate": encodes a few short clips (default 3 of 1 minute, random or chosen times) with the current
+- "Prevedi bitrate": encodes a few short clips (default 3 of 1 minute, random or chosen times, with a button that draws a new set of random points) with the current
   settings and shows the bitrate of each, mean/min/max and the predicted video size; an estimate, not a promise
 - "Verifica FPS originali": counts the real (non-duplicated) frames on 5 short clips and sets the FPS accordingly
 - Resolution cap, aspect ratio (crop / pad / DAR tag / stretch), flip, trim, audio re-encode or copy, subtitles

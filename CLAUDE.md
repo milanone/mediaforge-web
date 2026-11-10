@@ -52,7 +52,9 @@ Predict bitrate: `POST /api/predict` (options of the page + `n`, `clip_min`, `ti
 that `run_predict()` fills: it encodes N short clips with `build_cmd()` (same GPU path, video stream only, `mkv` in a temp
 folder; if the GPU path fails it retries the clip with software decoding) and puts the per-clip bitrates and the summary
 (`summarize_bitrates()`) in `job["predict"]`, which `/api/status/<id>` returns. Progress and Cancel use the normal
-`/api/status` and `/api/stop`. The job is hidden from `/api/jobs` so the page does not offer to re-attach to it; the
+`/api/status` and `/api/stop`. `GET /api/predict_points` (the page's "Nuovi punti" button) draws a fresh set of random
+start times with the same `predict_start_times()` and the page writes them, as h:mm:ss, in "Punti scelti"; the status
+poll carries `predict.starts` from the start, so the page shows which minute is being encoded. The job is hidden from `/api/jobs` so the page does not offer to re-attach to it; the
 consequence is that `deploy.sh` does not see it and would restart the container during a prediction (it only costs the
 prediction). Tried with `hevc_qsv` on a Windows PC (the local copy of the page on the Loki file gave 1870/1757/1247 kbps,
 as the desktop); not tried on gaia. `record_progress()` had a latent bug found by this: a sample with `time=N/A` made the

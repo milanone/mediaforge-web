@@ -1499,6 +1499,24 @@ def predict():
     return jsonify({"job_id": job_id, "starts": [round(s, 1) for s in starts]})
 
 
+@app.route("/api/predict_points")
+def predict_points():
+    """New random clip start times for "Predict bitrate" (the page's "Nuovi punti" button): same rule as the
+    random mode of /api/predict (predict_start_times), returned in seconds so the page can show them."""
+    src_path = resolve_bin_path(request.args.get("path", ""), request.args.get("source", "library"))
+    if not src_path.exists():
+        return jsonify({"error": "file not found"}), 404
+    _, _, _, duration = simplify_streams(ffprobe_json(src_path))
+    try:
+        n = int(request.args.get("n", 3))
+        clip_sec = float(request.args.get("clip_min", 1)) * 60
+        if not duration or not 1 <= n <= 10 or clip_sec <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"error": "Spezzoni: da 1 a 10, durata: minuti maggiori di 0."}), 400
+    return jsonify({"starts": [round(s, 1) for s in predict_start_times(duration, n, min(clip_sec, duration))]})
+
+
 @app.route("/api/jobs")
 def list_jobs():
     """Lavori in corso (per riagganciare la pagina dopo una chiusura o da un altro PC)."""

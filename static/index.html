@@ -264,6 +264,8 @@
           <label style="display:inline-block"><input type="radio" name="predMode" value="selected"
                  onchange="onPredictModeChange()"> Punti scelti (minuti):</label>
           <input type="text" id="predTimes" placeholder="es. 13, 20.5, 32:51" style="width:170px" disabled>
+          <button type="button" id="predDiceBtn" onclick="newPredictPoints()"
+                  title="Estrae un nuovo gruppo di punti casuali (sparsi nel film) e li scrive in 'Punti scelti', cosi' li vedi e puoi correggerli prima di prevedere. Premi ancora per un altro gruppo.">🎲 Nuovi punti</button>
           <button type="button" id="predictBtn" onclick="predictBitrate()">Prevedi bitrate</button>
         </div>
         <div id="predictMsg" style="font-size:0.85rem;color:var(--muted);margin-top:4px"></div>
@@ -719,6 +721,23 @@ function fmtClock(s) {
   return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
+async function newPredictPoints() {
+  if (!selected) return;
+  const msg = document.getElementById('predictMsg');
+  const n = parseInt(document.getElementById('predN').value) || 3;
+  const clip = parseFloat(document.getElementById('predMin').value) || 1;
+  try {
+    const res = await fetch(`/api/predict_points?source=${selected.source}&path=${encodeURIComponent(selected.path)}&n=${n}&clip_min=${clip}`);
+    const d = await res.json();
+    if (!res.ok) { msg.textContent = 'Errore: ' + (d.error || res.status); return; }
+    document.getElementById('predTimes').value = d.starts.map(fmtClock).join(', ');
+    document.querySelector('input[name="predMode"][value="selected"]').checked = true;
+    onPredictModeChange();
+  } catch (e) {
+    msg.textContent = 'Errore di rete.';
+  }
+}
+
 async function predictBitrate() {
   const btn = document.getElementById('predictBtn'), msg = document.getElementById('predictMsg');
   if (predictJobId) {  // il pulsante e' "Annulla" mentre la previsione gira
@@ -758,7 +777,10 @@ async function pollPredict(id, quality) {
   const p = st.predict || { n: 0, done: 0, samples: [] };
   if (st.status === 'running') {
     const so_far = p.samples.map(s => Math.round(s.kbps) + ' kb/s').join(', ');
-    msg.textContent = `Spezzone ${Math.min(p.done + 1, p.n)} di ${p.n} in corso (${Math.round(st.progress || 0)}%)…` +
+    const k = Math.min(p.done + 1, p.n);
+    const at = p.starts && p.starts[k - 1] !== undefined ? `, a ${fmtClock(p.starts[k - 1])}` : '';
+    msg.textContent = `Spezzone ${k} di ${p.n}${at} in corso (${Math.round(st.progress || 0)}%)…` +
+      (p.starts ? ` Punti: ${p.starts.map(fmtClock).join(', ')}.` : '') +
       (so_far ? ' Finora: ' + so_far : '');
     setTimeout(() => pollPredict(id, quality), 2000); return;
   }

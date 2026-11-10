@@ -77,6 +77,23 @@ class PredictRoute(unittest.TestCase):
         self.assertTrue(all(2 <= s <= 40 - 6 for s in starts), starts)
         self.assertEqual(self.wait(r.get_json()["job_id"])["status"], "done")
 
+    def test_new_points_route_gives_a_fresh_spread_set_each_time(self):
+        url = f"/api/predict_points?source=library&path={self.name}&n=3&clip_min=0.1"
+        sets = [self.client.get(url).get_json()["starts"] for _ in range(5)]
+        for starts in sets:
+            self.assertEqual(len(starts), 3)
+            self.assertEqual(starts, sorted(starts))
+            self.assertTrue(all(2 <= s <= 40 - 6 for s in starts), starts)
+        self.assertGreater(len({tuple(s) for s in sets}), 1)        # not always the same
+        self.assertEqual(self.client.get("/api/predict_points?source=library&path=nope.mkv").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/predict_points?source=library&path={self.name}&n=0").status_code, 400)
+
+    def test_job_status_carries_the_chosen_points_from_the_start(self):
+        r = self.post(n=2, clip_min=0.1, times="0:05, 0:25")
+        st = self.client.get(f"/api/status/{r.get_json()['job_id']}").get_json()
+        self.assertEqual(st["predict"]["starts"], [5.0, 25.0])
+        self.wait(r.get_json()["job_id"])
+
     def test_bad_requests(self):
         self.assertEqual(self.post(bitrate_kbps=1000).status_code, 400)
         self.assertEqual(self.post(audio_only=True).status_code, 400)
