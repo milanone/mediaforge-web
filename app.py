@@ -2,6 +2,7 @@ import json
 import math
 import os
 import queue
+import random
 import re
 import shutil
 import subprocess
@@ -663,7 +664,9 @@ def record_progress(job, st):
     inst = None
     ref = next((h for h in reversed(hist[-3:]) if h.get("pass") == job.get("pass_no", 1)), None)
     ref = hist[-3] if len(hist) >= 3 and hist[-3].get("pass") == job.get("pass_no", 1) else ref
-    if ref and st["time_s"] is not None and st["size_bytes"] is not None and ref.get("size") is not None:
+    # ffmpeg can print time=N/A in the first lines (e.g. after -ss): the reference sample may have no time
+    if (ref and st["time_s"] is not None and st["size_bytes"] is not None and ref.get("size") is not None
+            and ref.get("time_s") is not None):
         dt = st["time_s"] - ref["time_s"]
         if dt > 1:
             inst = (st["size_bytes"] - ref["size"]) * 8 / dt / 1000
@@ -933,6 +936,117 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
     finally:
         if pass_dir:
             shutil.rmtree(pass_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# "Predict bitrate": a few short test encodes with the current settings (same rules as the desktop app,
+# MediaForge.pyw: predict_start_times / parse_start_times / summarize_bitrates / predict_bitrate)
+# ---------------------------------------------------------------------------
+PREDICT_EDGE = 0.05  # random clips stay inside 5%..95% of the film (no opening titles / end credits)
+
+
+def predict_start_times(duration, n, clip_sec, rng=None):
+    """Start times (s) of n clips, random but spread out: the usable range (5%..95% of the film, clip length
+    included) is cut in n equal bins and one start is drawn inside each bin."""
+    rng = rng or random
+    lo = duration * PREDICT_EDGE
+    hi = duration * (1 - PREDICT_EDGE) - clip_sec
+    if n < 1 or duration <= clip_sec:
+        return [0.0]
+    if hi <= lo:
+        return [max(0.0, (duration - clip_sec) / 2)]
+    width = (hi - lo) / n
+    return [lo + width * i + rng.uniform(0, width) for i in range(n)]
+
+
+def parse_start_times(text, duration, clip_sec):
+    """Start times typed by the user: comma-separated, each in minutes (13, 20.5) or mm:ss / h:mm:ss.
+    Returns seconds; raises ValueError with a message for the user if one is invalid or the clip would run
+    past the end of the file."""
+    out = []
+    for token in (t.strip() for t in str(text).replace(";", ",").split(",")):
+        if not token:
+            continue
+        try:
+            if ":" in token:
+                secs = 0.0
+                for part in token.split(":"):
+                    secs = secs * 60 + float(part)
+            else:
+                secs = float(token) * 60
+        except ValueError:
+            raise ValueError(f"'{token}' non e' un tempo: usa i minuti (13 o 20.5) oppure mm:ss")
+        if secs < 0 or secs + clip_sec > duration + 0.5:
+            raise ValueError(f"'{token}': lo spezzone da {clip_sec / 60:g} min non sta in un file da "
+                             f"{duration / 60:.1f} min")
+        out.append(secs)
+    if not out:
+        raise ValueError("Scrivi almeno un punto di partenza (minuti, separati da virgola)")
+    return out
+
+
+def summarize_bitrates(kbps, duration):
+    """Mean/min/max of the measured clip bitrates and the video size that the mean predicts for the whole
+    file (MB = 2^20 bytes; audio and subtitles are not included)."""
+    mean = sum(kbps) / len(kbps)
+    return {"mean": mean, "min": min(kbps), "max": max(kbps),
+            "size_mb": mean * 1000 * duration / 8 / 1_048_576}
+
+
+def predict_sample_opts(opts, start, clip_sec):
+    """Options of one test clip: same video settings as the real encode, but only the video stream, a short
+    trim, no subtitles and no target bitrate (it is a quality/CRF prediction)."""
+    return dict(opts, start=f"{start:.2f}", duration=f"{clip_sec:.2f}", audio_indices=[], sub_indices=[],
+                subs_mode="no", bitrate_kbps=None, two_pass=False, audio_only=False, mode=None,
+                container="mkv")
+
+
+def run_predict(job_id, src_path: Path, opts: dict, probe: dict, starts, clip_sec):
+    job = jobs[job_id]
+    pred = job["predict"]
+    _, _, _, duration = simplify_streams(probe)
+    tmpdir = Path(tempfile.mkdtemp(prefix="mediaforge_predict_"))
+    use_hw = True
+    try:
+        for i, start in enumerate(starts, 1):
+            dst = tmpdir / f"clip_{i}.mkv"
+            while True:
+                cmd = build_cmd(src_path, dst, predict_sample_opts(opts, start, clip_sec), probe, hw=use_hw)
+                job["cmd"] = " ".join(cmd)
+                job["progress"] = 0
+                outcome = run_ffmpeg_watchdog(cmd, job, clip_sec)
+                if outcome != "ok" and "-hwaccel" in cmd and outcome != "cancelled":
+                    job["log"].append("Decodifica su GPU non riuscita: riprovo questo spezzone in software.")
+                    dst.unlink(missing_ok=True)
+                    use_hw = False
+                    continue
+                break
+            if outcome == "cancelled":
+                job["status"] = "cancelled"
+                return
+            if outcome != "ok" or not dst.exists():
+                job["log"].append(f"Spezzone {i} non riuscito.")
+                job["status"] = "error"
+                return
+            real = float(ffprobe_json(dst).get("format", {}).get("duration") or 0) or clip_sec
+            bit_s = real_video_bitrate(dst, real)
+            dst.unlink(missing_ok=True)
+            if not bit_s:
+                job["log"].append(f"Spezzone {i}: bitrate non calcolabile.")
+                job["status"] = "error"
+                return
+            pred["samples"].append({"start": round(start, 1), "kbps": round(bit_s / 1000, 1)})
+            pred["done"] = i
+        res = summarize_bitrates([s["kbps"] for s in pred["samples"]], duration)
+        pred["result"] = {k: round(v, 1) for k, v in res.items()}
+        pred["result"]["duration"] = duration
+        job["progress"] = 100
+        job["status"] = "done"  # last: the poll must not see "done" before the result is set
+    except Exception as e:
+        job["status"] = "error"
+        job["log"].append(str(e))
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1343,12 +1457,54 @@ def encode():
     return jsonify({"job_id": job_id})
 
 
+@app.route("/api/predict", methods=["POST"])
+def predict():
+    """"Predict bitrate": encodes a few short clips with the current settings and returns a job to poll
+    (/api/status/<id>, "predict" key) and to cancel (/api/stop/<id>). Body: the usual options plus
+    n (clips), clip_min (length in minutes) and times (typed start times, empty = random)."""
+    data = request.get_json(force=True)
+    src_path = resolve_bin_path(data.get("path", ""), data.get("source", "library"))
+    if not src_path.exists():
+        return jsonify({"error": "file not found"}), 404
+    if data.get("audio_only") or data.get("bitrate_kbps"):
+        return jsonify({"error": "Funziona con il video in modalita' qualita' costante (CRF)."}), 400
+    probe = ffprobe_json(src_path)
+    video, _, _, duration = simplify_streams(probe)
+    if not video or not duration:
+        return jsonify({"error": "nessun flusso video o durata non leggibile"}), 400
+    try:
+        n = int(data.get("n", 3))
+        clip_sec = float(data.get("clip_min", 1)) * 60
+        if not 1 <= n <= 10 or clip_sec <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"error": "Spezzoni: da 1 a 10, durata: minuti maggiori di 0."}), 400
+    clip_sec = min(clip_sec, duration)
+    times = str(data.get("times") or "").strip()
+    try:
+        starts = parse_start_times(times, duration, clip_sec) if times else predict_start_times(duration, n, clip_sec)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    job_id = uuid.uuid4().hex
+    jobs[job_id] = {
+        "status": "running", "progress": 0, "log": [], "kind": "predict",
+        "src": str(src_path), "out_name": "", "dst": "", "output_bitrate": None, "output_size": None,
+        "started_at": time.time(),
+        "predict": {"n": len(starts), "done": 0, "clip_sec": clip_sec, "starts": [round(s, 1) for s in starts],
+                    "samples": [], "result": None},
+    }
+    threading.Thread(target=run_predict, args=(job_id, src_path, data, probe, starts, clip_sec),
+                     daemon=True).start()
+    return jsonify({"job_id": job_id, "starts": [round(s, 1) for s in starts]})
+
+
 @app.route("/api/jobs")
 def list_jobs():
     """Lavori in corso (per riagganciare la pagina dopo una chiusura o da un altro PC)."""
     return jsonify([{"job_id": jid, "src": Path(j["src"]).name, "out_name": j["out_name"],
                      "progress": j["progress"]}
-                    for jid, j in jobs.items() if j["status"] == "running"])
+                    for jid, j in jobs.items() if j["status"] == "running" and j.get("kind") != "predict"])
 
 
 @app.route("/api/status/<job_id>")
@@ -1366,6 +1522,7 @@ def status(job_id):
         "gpu_warning": bool(job.get("gpu_warning")),
         "duration": job.get("duration"),
         "stats": job.get("stats"),
+        "predict": job.get("predict"),
         # only the samples the page does not have yet (?h=<how many it has>)
         "history": job.get("history", [])[request.args.get("h", 0, type=int):],
         "history_total": len(job.get("history", [])),

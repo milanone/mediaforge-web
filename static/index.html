@@ -254,9 +254,23 @@
           </label>
         </div>
       </div>
+      <div class="field" id="predictBox" style="grid-column:1 / -1">
+        <label>Prevedi bitrate — codifiche di prova con le impostazioni attuali (solo qualità costante)</label>
+        <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px">
+          <input type="number" id="predN" min="1" max="10" value="3" style="width:64px"> spezzoni da
+          <input type="number" id="predMin" min="0.5" max="10" step="0.5" value="1" style="width:72px"> min
+          <label style="display:inline-block"><input type="radio" name="predMode" value="random" checked
+                 onchange="onPredictModeChange()"> Punti casuali</label>
+          <label style="display:inline-block"><input type="radio" name="predMode" value="selected"
+                 onchange="onPredictModeChange()"> Punti scelti (minuti):</label>
+          <input type="text" id="predTimes" placeholder="es. 13, 20.5, 32:51" style="width:170px" disabled>
+          <button type="button" id="predictBtn" onclick="predictBitrate()">Prevedi bitrate</button>
+        </div>
+        <div id="predictMsg" style="font-size:0.85rem;color:var(--muted);margin-top:4px"></div>
+      </div>
       <div class="field">
         <label>Risoluzione massima</label>
-        <select id="resCap" onchange="schedulePreview()">
+        <select id="resCap" onchange="onResCapChange()">
           <option value="">Originale</option>
           <option value="1080">1080p</option>
           <option value="720">720p</option>
@@ -690,11 +704,85 @@ async function detectFps() {
   }
 }
 
+// ---- Prevedi bitrate: codifica alcuni spezzoni con le impostazioni attuali (/api/predict) ----
+let predictJobId = null;
+
+function onResCapChange() { updateQualityAuto(); schedulePreview(); }
+
+function onPredictModeChange() {
+  document.getElementById('predTimes').disabled =
+    document.querySelector('input[name="predMode"]:checked').value !== 'selected';
+}
+
+function fmtClock(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60);
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+async function predictBitrate() {
+  const btn = document.getElementById('predictBtn'), msg = document.getElementById('predictMsg');
+  if (predictJobId) {  // il pulsante e' "Annulla" mentre la previsione gira
+    btn.disabled = true; msg.textContent = 'Annullamento…';
+    await fetch('/api/stop/' + predictJobId, { method: 'POST' });
+    return;
+  }
+  if (!selected) return;
+  const opts = collectOpts();
+  opts.n = parseInt(document.getElementById('predN').value) || 3;
+  opts.clip_min = parseFloat(document.getElementById('predMin').value) || 1;
+  opts.times = document.querySelector('input[name="predMode"]:checked').value === 'selected'
+    ? document.getElementById('predTimes').value : '';
+  btn.disabled = true; msg.textContent = 'Avvio…';
+  let d;
+  try {
+    const res = await fetch('/api/predict', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify(opts) });
+    d = await res.json();
+    if (!res.ok) { msg.textContent = 'Errore: ' + (d.error || res.status); btn.disabled = false; return; }
+  } catch (e) {
+    msg.textContent = 'Errore di rete.'; btn.disabled = false; return;
+  }
+  predictJobId = d.job_id;
+  btn.textContent = 'Annulla'; btn.disabled = false;
+  pollPredict(d.job_id, opts.quality);
+}
+
+async function pollPredict(id, quality) {
+  const btn = document.getElementById('predictBtn'), msg = document.getElementById('predictMsg');
+  let st;
+  try {
+    st = await (await fetch('/api/status/' + id)).json();
+  } catch (e) {
+    setTimeout(() => pollPredict(id, quality), 3000); return;
+  }
+  const p = st.predict || { n: 0, done: 0, samples: [] };
+  if (st.status === 'running') {
+    const so_far = p.samples.map(s => Math.round(s.kbps) + ' kb/s').join(', ');
+    msg.textContent = `Spezzone ${Math.min(p.done + 1, p.n)} di ${p.n} in corso (${Math.round(st.progress || 0)}%)…` +
+      (so_far ? ' Finora: ' + so_far : '');
+    setTimeout(() => pollPredict(id, quality), 2000); return;
+  }
+  predictJobId = null; btn.textContent = 'Prevedi bitrate'; btn.disabled = false;
+  if (st.status === 'done' && p.result) {
+    const r = p.result;
+    const size = r.size_mb >= 1024 ? (r.size_mb / 1024).toFixed(1) + ' GB' : Math.round(r.size_mb) + ' MB';
+    const points = p.samples.map(s => `${fmtClock(s.start)} → ${Math.round(s.kbps)}`).join(' · ');
+    msg.textContent = `CRF ${quality}: media ${Math.round(r.mean)} kb/s (min ${Math.round(r.min)} – max ${Math.round(r.max)}) ` +
+      `su ${p.samples.length} spezzoni (${points}) → circa ${size} di video per tutto il file ` +
+      `(audio e sottotitoli esclusi; è una stima).`;
+  } else if (st.status === 'cancelled') {
+    msg.textContent = 'Previsione annullata.';
+  } else {
+    msg.textContent = 'Previsione non riuscita: ' + ((st.log || []).slice(-1)[0] || 'errore');
+  }
+}
+
 async function loadProbe() {
   const res = await fetch('/api/probe?source=' + selected.source + '&path=' + encodeURIComponent(selected.path));
   const data = await res.json();
   probeData = data;
   const fm = document.getElementById('fpsDetectMsg'); if (fm) fm.textContent = '';
+  const pm = document.getElementById('predictMsg'); if (pm && !predictJobId) pm.textContent = '';
   const v = data.video;
   let info = `Durata: ${fmtDuration(data.duration)} — Dimensione: ${fmtBytes(data.size)}`;
   if (v) {
@@ -741,7 +829,21 @@ async function loadProbe() {
 // Ordine di grandezza misurato: ogni punto di CRF in meno costa circa +25% di
 // bitrate (23->22 su 4K: 3,05 -> 3,82 Mbps).
 const CRF_PUNTI = [[854, 16], [1280, 18], [1920, 20], [3840, 22]];
-function crfSuggerito(width, height, codec) {
+// Sorgente 4K (lato lungo >= 3000) ridotta a una risoluzione piu' bassa: CRF 16 invece della curva (20 a 1080p).
+// Misurato il 2026-11-10 su Loki S01E01, 3 spezzoni da 60 s, 4K HDR -> 1080p, hevc_qsv: il dettaglio conservato
+// (energia delle alte frequenze rispetto al sorgente ridotto, relativa al CRF 8) scende a circa un terzo a CRF 14
+// e a un quinto a CRF 16 nelle scene dettagliate; a CRF 22 il bitrate medio era ~570 kb/s. Scelta dell'autore: 16
+// (risparmia spazio) o 14 (conserva il dettaglio), default 16. Non misurato: sorgente 4K tenuta a 4K.
+// Stesse costanti della versione desktop (QSV_SOURCE_4K_MIN, QSV_CRF_DOWNSCALED_4K).
+const QSV_SOURCE_4K_MIN = 3000;
+const QSV_CRF_DOWNSCALED_4K = 16;
+// Dimensioni dopo il limite di risoluzione (come risoluzione_effettiva() nel desktop).
+function effectiveDims(width, height, cap) {
+  if (!width || !height || !cap) return [width, height];
+  if (height > width) return width > cap ? [cap, 2 * Math.round(height * cap / width / 2)] : [width, height];
+  return height > cap ? [2 * Math.round(width * cap / height / 2), cap] : [width, height];
+}
+function crfSuggerito(width, height, codec, sourceSide) {
   const lato = Math.max(width || 0, height || 0);
   let base;
   if (lato <= 0) base = 20;
@@ -756,6 +858,7 @@ function crfSuggerito(width, height, codec) {
       }
     }
   }
+  if (sourceSide && sourceSide >= QSV_SOURCE_4K_MIN && lato > 0 && lato < sourceSide) base = QSV_CRF_DOWNSCALED_4K;
   // AV1 e' generalmente un po' piu' efficiente di HEVC: stessa qualita'
   // percepita con un CRF numericamente piu' alto. Nessun encoder AV1 e'
   // disponibile oggi su questa istanza (AVAILABLE_ENCODERS in app.py).
@@ -773,7 +876,10 @@ function updateQualityAuto() {
   const v = probeData && probeData.video;
   if (!v || !v.width || !v.height) return;
   const codec = document.getElementById('codec').value;
-  const val = crfSuggerito(v.width, v.height, codec);
+  // sulla risoluzione di USCITA (dopo il limite di risoluzione), come il desktop
+  const cap = parseInt(document.getElementById('resCap').value) || 0;
+  const [ow, oh] = effectiveDims(v.width, v.height, cap);
+  const val = crfSuggerito(ow, oh, codec, Math.max(v.width, v.height));
   updatingQualityAuto = true;
   document.getElementById('quality').value = val;
   document.getElementById('qualityLabel').textContent = val;
@@ -952,6 +1058,7 @@ function onRateModeChange() {
   const byBitrate = document.getElementById('rateMode').value === 'bitrate';
   document.getElementById('bitrateBox').hidden = !byBitrate;
   document.getElementById('quality').disabled = byBitrate;
+  if (!predictJobId) document.getElementById('predictBtn').disabled = byBitrate;  // CRF prediction only
   updateTwoPassVisibility();
   schedulePreview();
 }

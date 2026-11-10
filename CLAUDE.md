@@ -48,6 +48,16 @@ longer fill the log. `/api/status/<id>?h=N` returns only the samples after the f
 frame / time / size / ETA next to the bar and three canvas charts (fps, speed vs real time, bitrate), no library. `q` is not shown:
 it is `-0.0` (not reported) with QSV and x265.
 
+Predict bitrate: `POST /api/predict` (options of the page + `n`, `clip_min`, `times`) creates a job with `kind: "predict"`
+that `run_predict()` fills: it encodes N short clips with `build_cmd()` (same GPU path, video stream only, `mkv` in a temp
+folder; if the GPU path fails it retries the clip with software decoding) and puts the per-clip bitrates and the summary
+(`summarize_bitrates()`) in `job["predict"]`, which `/api/status/<id>` returns. Progress and Cancel use the normal
+`/api/status` and `/api/stop`. The job is hidden from `/api/jobs` so the page does not offer to re-attach to it; the
+consequence is that `deploy.sh` does not see it and would restart the container during a prediction (it only costs the
+prediction). Tried with `hevc_qsv` on a Windows PC (the local copy of the page on the Loki file gave 1870/1757/1247 kbps,
+as the desktop); not tried on gaia. `record_progress()` had a latent bug found by this: a sample with `time=N/A` made the
+next one fail with `float - None`; fixed, test added.
+
 GPU decoder warning: if ffmpeg prints a line of `GPU_DECODE_ERRORS` (the decoder is dropping frames but ffmpeg would
 still exit with 0), `run_ffmpeg_watchdog(watch_gpu=True)` raises `job["gpu_warning"]` and does NOT stop anything: software
 encoding on gaia is very slow, so the page asks the user (continue / stop / `/api/retry_software` = redo everything
@@ -87,6 +97,8 @@ enforces the "same" rows.
 | Real bitrate, declared bitrate, fix of a stale bitrate tag | yes | yes | same method; the web computes the real bitrate on every probe, the desktop only when nothing is declared or on request |
 | GPU decoder drops frames (error lines in the ffmpeg log) | stops the attempt, software fallback by itself | warning in the page: continue / stop / redo in software | different on purpose (software is very slow on gaia) |
 | GPU path | direct QSV first (`-hwaccel qsv`, as the web), then `d3d11va` + `hwmap`, then software | `-hwaccel qsv`, then software | same first choice; the extra d3d11va step exists only on Windows |
+| Default CRF for a 4K source scaled down (QSV) | 16 (`QSV_CRF_DOWNSCALED_4K`, via `crf_suggerito(source_side=)`) | 16 (`QSV_CRF_DOWNSCALED_4K` in `index.html`; the page now also feeds the OUTPUT size after the resolution cap, as the desktop does) | same (tested through node) |
+| Predict bitrate (N clips of X min, random or typed times, mean/min/max, predicted size) | `predict_bitrate()` | `/api/predict`, `run_predict()` | same method (start-time and summary functions tested against each other); the web runs it as a hidden job and has no software fallback beyond software decoding |
 | Encoders | QSV, AMF, NVENC, VideoToolbox, x265, SVT-AV1 | QSV, x265 | different on purpose |
 | Mux, Chapters, batch folder / library, upload, background jobs | desktop only / web only | | different on purpose |
 

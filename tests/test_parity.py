@@ -145,6 +145,64 @@ class Parity(unittest.TestCase):
     def test_stats_tags_cleared_on_video(self):
         self.assertEqual(web.STATS_TAGS_MKV, self.desk.STATS_TAGS_MKV)
 
+    def test_default_crf_for_4k_source_scaled_down_matches_desktop(self):
+        """Same default (16) for a 4K source scaled down; the web feeds the OUTPUT size (after the resolution
+        cap) plus the source side, like the desktop."""
+        if not shutil.which("node"):
+            self.skipTest("node not available")
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        start = html.index("const CRF_PUNTI")
+        end = html.index("// Ricalcola il CRF")
+        # (source w, h, cap): output size is computed by effectiveDims / risoluzione_effettiva
+        cases = [(3840, 2160, 1080), (3840, 2160, 720), (3840, 2160, 0), (1920, 1080, 0), (1920, 1080, 720),
+                 (2560, 1440, 1080), (2160, 3840, 1080), (3840, 1608, 1080), (3000, 2000, 1080)]
+        js = html[start:end] + """
+const cases = %s;
+console.log(JSON.stringify(cases.map(([w, h, cap]) => {
+  const [ow, oh] = effectiveDims(w, h, cap);
+  return [ow, oh, crfSuggerito(ow, oh, 'hevc_qsv', Math.max(w, h)), crfSuggerito(ow, oh, 'av1_qsv', Math.max(w, h))];
+})));""" % json.dumps(cases)
+        out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+        for (w, h, cap), (ow, oh, hevc, av1) in zip(cases, out):
+            dw, dh = self.desk.risoluzione_effettiva(w, h, cap or None)
+            self.assertEqual((ow, oh), (dw, dh), (w, h, cap))
+            side = max(w, h)
+            self.assertEqual(hevc, self.desk.crf_suggerito(dw, dh, "hevc_qsv", side), (w, h, cap))
+            self.assertEqual(av1, self.desk.crf_suggerito(dw, dh, "av1_qsv", side), (w, h, cap))
+        self.assertEqual(out[0][2], 16)   # 4K -> 1080p
+        self.assertEqual(out[2][2], 22)   # 4K kept at 4K: the old curve
+
+    def test_predict_bitrate_helpers_match_desktop(self):
+        import random
+        for seed in range(20):
+            self.assertEqual(web.predict_start_times(6000, 3, 60, random.Random(seed)),
+                             self.desk.predict_start_times(6000, 3, 60, random.Random(seed)))
+        self.assertEqual(web.predict_start_times(30, 3, 60), self.desk.predict_start_times(30, 3, 60))
+        for text in ("13, 20.5", "1:02:03; 5:30", "0"):
+            self.assertEqual(web.parse_start_times(text, 6000, 60), self.desk.parse_start_times(text, 6000, 60))
+        for bad in ("abc", "", "100", "-1"):
+            with self.assertRaises(ValueError):
+                web.parse_start_times(bad, 6000, 60)
+            with self.assertRaises(ValueError):
+                self.desk.parse_start_times(bad, 6000, 60)
+        self.assertEqual(web.summarize_bitrates([483, 732, 505], 3000),
+                         self.desk.summarize_bitrates([483, 732, 505], 3000))
+
+    def test_predict_sample_command_is_the_real_encode_on_a_short_video_only_clip(self):
+        video = video_stream(3840, 2160, "hevc", "yuv420p10le")
+        opts = {"codec": "hevc_qsv", "quality": 16, "preset": "medium", "look_ahead": True, "resolution_cap": 1080,
+                "audio_mode": "aac", "subs_mode": "copy", "container": "mp4", "bitrate_kbps": 2000}
+        cmd = web.build_cmd(Path("in.mkv"), Path("clip.mkv"), web.predict_sample_opts(opts, 824, 60),
+                            probe_of(video), hw=True)
+        self.assertEqual(arg_after(cmd, "-ss"), "824.00")
+        self.assertEqual(arg_after(cmd, "-t"), "60.00")
+        self.assertEqual(arg_after(cmd, "-global_quality"), "16")       # CRF, not the bitrate that was set
+        self.assertNotIn("-b:v", cmd)
+        self.assertEqual(arg_after(cmd, "-vf"), "scale_qsv=w=1920:h=1080")   # same GPU scaling as the real job
+        self.assertEqual([cmd[i + 1] for i, a in enumerate(cmd) if a == "-map"], ["0:v:0"])
+        self.assertNotIn("-c:s", cmd)
+        self.assertEqual(cmd[-1], "clip.mkv")
+
 
 class WebOnly(unittest.TestCase):
     """Behaviour of the web engine on its own (no desktop needed)."""

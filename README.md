@@ -16,7 +16,10 @@ encoding rules, different plumbing (files on the server, jobs in the background,
 - Encoders probed at startup with a real 1-frame encode: `hevc_qsv`, `h264_qsv`, `libx265`
 - QSV: hardware decoding and `scale_qsv` when the source allows it (codec/pixel-format gating), automatic
   retry in software if the GPU path fails or stalls; 3 real preset levels (fast / normal / slow)
-- Default CRF follows the output resolution (480p=16, 720p=18, 1080p=20, 4K=22), measured with VMAF on 4K films
+- Default CRF follows the output resolution (480p=16, 720p=18, 1080p=20, 4K=22), measured with VMAF on 4K films;
+  a 4K source scaled down gets CRF 16 (the detailed scenes lose most of their fine detail at higher values)
+- "Prevedi bitrate": encodes a few short clips (default 3 of 1 minute, random or chosen times) with the current
+  settings and shows the bitrate of each, mean/min/max and the predicted video size; an estimate, not a promise
 - "Verifica FPS originali": counts the real (non-duplicated) frames on 5 short clips and sets the FPS accordingly
 - Resolution cap, aspect ratio (crop / pad / DAR tag / stretch), flip, trim, audio re-encode or copy, subtitles
   (copy / SRT / none / mux afterwards), audio-only mode
@@ -56,6 +59,8 @@ The container has no access to Docker: the page only leaves a request file that 
 - No authentication: expose it only on a trusted network
 - Target bitrate, 2-pass and the clean stop were added on 2026-10-18 and tested with `libx265` on Windows only;
   not yet verified with QSV on the server
+- "Prevedi bitrate" was tried with `hevc_qsv` on a Windows PC (local copy of the page) and with `libx265` in the
+  tests; not yet on the server
 
 ## License
 

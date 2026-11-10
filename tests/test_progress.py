@@ -86,6 +86,16 @@ class History(unittest.TestCase):
         self.assertEqual(last["pass"], 2)
         self.assertIsNone(last["inst_kbps"])                   # no reference sample of the same pass
 
+    def test_a_sample_without_time_does_not_break_the_next_one(self):
+        """ffmpeg prints time=N/A in the first lines after -ss: the next sample used it as the reference
+        (TypeError: float - None) and the whole job failed."""
+        self.sample(time_s=None, size=1024, t_offset=0)
+        self.sample(time_s=5.0, size=2048, t_offset=1)
+        self.sample(time_s=9.0, size=4096, t_offset=2)
+        self.sample(time_s=13.0, size=8192, t_offset=3)
+        self.assertEqual(len(self.job["history"]), 4)
+        self.assertIsNone(self.job["history"][1]["inst_kbps"])    # its reference had no time
+
     def test_history_is_capped(self):
         self.job["history"] = [{"pass": 1, "time_s": 0, "size": 0}] * web.HISTORY_MAX
         self.job["_hist_t"] = 0
