@@ -233,10 +233,10 @@
         <select id="codec"></select>
       </div>
       <div class="field">
-        <label>Qualità: <span id="qualityLabel">20</span> (16=migliore, 32=peggiore) —
+        <label>Qualità: <span id="qualityLabel">20</span> (10=migliore, 32=peggiore) —
           <span id="qualityAutoState" style="color:var(--muted)">automatica</span></label>
         <div style="display:flex; align-items:center; gap:8px">
-          <input type="range" id="quality" min="16" max="32" value="20" style="flex:1" oninput="onQualityInput()">
+          <input type="range" id="quality" min="10" max="32" value="20" style="flex:1" oninput="onQualityInput()">
           <button type="button" class="btn-mini" id="qualityAutoBtn" style="display:none" onclick="resetQualityAuto()">↺ Auto</button>
         </div>
       </div>
@@ -863,8 +863,8 @@ function crfSuggerito(width, height, codec, sourceSide) {
   // percepita con un CRF numericamente piu' alto. Nessun encoder AV1 e'
   // disponibile oggi su questa istanza (AVAILABLE_ENCODERS in app.py).
   if ((codec || '').startsWith('av1')) base += 1;
-  // Stesso range 16-32 dello slider.
-  return Math.max(16, Math.min(32, Math.round(base)));
+  // Stesso range 10-32 dello slider (il minimo era 16: impediva di scendere sotto il default dei 4K ridotti).
+  return Math.max(10, Math.min(32, Math.round(base)));
 }
 
 // Ricalcola il CRF proposto sul file/codec correnti, ma solo se l'utente non
