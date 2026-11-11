@@ -1071,7 +1071,8 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
 # "Predict bitrate": a few short test encodes with the current settings (same rules as the desktop app,
 # MediaForge.pyw: predict_start_times / parse_start_times / summarize_bitrates / predict_bitrate)
 # ---------------------------------------------------------------------------
-PREDICT_EDGE = 0.05  # random clips stay inside 5%..95% of the film (no opening titles / end credits)
+PREDICT_MAX_CLIPS = 20   # same as the desktop app; the clip length can go down to 0.1 min
+PREDICT_EDGE = 0.05 # random clips stay inside 5%..95% of the film (no opening titles / end credits)
 
 
 def predict_start_times(duration, n, clip_sec, rng=None):
@@ -1605,10 +1606,10 @@ def predict():
     try:
         n = int(data.get("n", 3))
         clip_sec = float(data.get("clip_min", 1)) * 60
-        if not 1 <= n <= 10 or clip_sec <= 0:
+        if not 1 <= n <= PREDICT_MAX_CLIPS or clip_sec <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        return jsonify({"error": "Spezzoni: da 1 a 10, durata: minuti maggiori di 0."}), 400
+        return jsonify({"error": f"Spezzoni: da 1 a {PREDICT_MAX_CLIPS}, durata: minuti maggiori di 0."}), 400
     clip_sec = min(clip_sec, duration)
     times = str(data.get("times") or "").strip()
     try:
@@ -1640,10 +1641,10 @@ def predict_points():
     try:
         n = int(request.args.get("n", 3))
         clip_sec = float(request.args.get("clip_min", 1)) * 60
-        if not duration or not 1 <= n <= 10 or clip_sec <= 0:
+        if not duration or not 1 <= n <= PREDICT_MAX_CLIPS or clip_sec <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        return jsonify({"error": "Spezzoni: da 1 a 10, durata: minuti maggiori di 0."}), 400
+        return jsonify({"error": f"Spezzoni: da 1 a {PREDICT_MAX_CLIPS}, durata: minuti maggiori di 0."}), 400
     return jsonify({"starts": [round(s, 1) for s in predict_start_times(duration, n, min(clip_sec, duration))]})
 
 
