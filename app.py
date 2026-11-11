@@ -126,6 +126,34 @@ def declared_video_bitrate(video):
     return None
 
 
+def audio_output_kbps(opts, probe):
+    """kbps of the audio tracks that end up in the output file: the declared bitrate of each copied track, the
+    chosen bitrate of each re-encoded one. ffmpeg's progress line (size=, bitrate=) counts the WHOLE output file,
+    so run_encode subtracts this to show the video bitrate in the live chart. Audio is usually constant bitrate
+    (AC-3, E-AC-3, AAC), so a constant is a good estimate; it is not for lossless or VBR audio (TrueHD, FLAC, DTS-HD).
+    None when it cannot be known (audio-only job, or a copied track with no declared bitrate): nothing is then
+    subtracted and the page says the chart includes the audio."""
+    if opts.get("audio_only") or opts.get("mode") in ("fix_hvc1", "fix_bitrate"):
+        return None
+    _, audio, _, _ = simplify_streams(probe)
+    idx = opts.get("audio_indices")
+    chosen = audio if idx is None else [audio[i] for i in idx if 0 <= i < len(audio)]
+    mode = opts.get("audio_mode", "copy")
+    total = 0.0
+    for s in chosen:
+        if mode in AUDIO_DEFAULT_BITRATE:           # re-encoded at a fixed bitrate
+            try:
+                total += int(opts.get("audio_bitrate") or AUDIO_DEFAULT_BITRATE[mode])
+            except (TypeError, ValueError):
+                total += AUDIO_DEFAULT_BITRATE[mode]
+        else:                                        # copied
+            br = declared_video_bitrate(s)           # generic: bit_rate field or BPS tag of any stream
+            if br is None:
+                return None
+            total += br / 1000
+    return total
+
+
 def simplify_streams(probe):
     streams = probe.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
@@ -657,6 +685,8 @@ def record_progress(job, st):
     now = time.time()
     if now - job.get("_hist_t", 0) < HISTORY_STEP:
         return
+    # ffmpeg's size= and bitrate= are those of the whole file: take the (constant) audio off to get the video
+    audio = job.get("audio_kbps") or 0
     hist = job.setdefault("history", [])
     if len(hist) >= HISTORY_MAX:
         return
@@ -669,10 +699,11 @@ def record_progress(job, st):
             and ref.get("time_s") is not None):
         dt = st["time_s"] - ref["time_s"]
         if dt > 1:
-            inst = (st["size_bytes"] - ref["size"]) * 8 / dt / 1000
+            inst = max(0.0, (st["size_bytes"] - ref["size"]) * 8 / dt / 1000 - audio)
+    avg = max(0.0, st["bitrate_kbps"] - audio) if st["bitrate_kbps"] is not None else None
     hist.append({"t": round(now - job.get("started_at", now), 1), "pass": job.get("pass_no", 1),
                  "time_s": st["time_s"], "fps": st["fps"], "speed": st["speed"],
-                 "avg_kbps": st["bitrate_kbps"], "inst_kbps": inst, "size": st["size_bytes"]})
+                 "avg_kbps": avg, "inst_kbps": inst, "size": st["size_bytes"]})
 
 STALL_TIMEOUT = 8.0  # secondi senza che "time=" avanzi prima di considerare lo stallo
 
@@ -799,6 +830,8 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
         except ValueError:
             pass
     job["duration"] = duration
+    audio_kbps = audio_output_kbps(opts, probe)   # subtracted from ffmpeg's whole-file bitrate (see record_progress)
+    job["audio_kbps"] = audio_kbps
 
     # Solo gli encode "normali" (non audio-only, non maintenance) hanno
     # sottotitoli nel percorso principale - la logica "muxa dopo"/"riprova
@@ -819,6 +852,7 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
         cmd1 = build_cmd(src_path, dst_path, dict(opts, pass_num=1, subs_mode="no"), probe, hw=False)
         job["log"].append("Passata 1/2 (analisi)")
         job["cmd"] = " ".join(cmd1)
+        job["audio_kbps"] = 0          # pass 1 writes no audio (-an)
         outcome1 = run_ffmpeg_watchdog(cmd1, job, duration)
         if outcome1 in ("cancelled", "finished"):
             job["status"] = "cancelled"
@@ -829,6 +863,7 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
             shutil.rmtree(pass_dir, ignore_errors=True)
             return
         job["log"].append("Passata 2/2 (codifica)")
+        job["audio_kbps"] = audio_kbps
         job["pass_no"] = 2
         job["progress"] = 0
         opts = dict(opts, pass_num=2)
@@ -1450,6 +1485,7 @@ def encode():
         "status": "running", "progress": 0, "log": [],
         "src": str(src_path), "out_name": out_name, "dst": str(dst_path),
         "output_bitrate": None, "output_size": None, "started_at": time.time(),
+        "audio_kbps": audio_output_kbps(data, probe),   # set from the start so the page does not flicker
     }
 
     t = threading.Thread(target=run_encode, args=(job_id, src_path, dst_path, data, probe), daemon=True)
@@ -1541,6 +1577,7 @@ def status(job_id):
         "duration": job.get("duration"),
         "stats": job.get("stats"),
         "predict": job.get("predict"),
+        "audio_kbps": job.get("audio_kbps"),   # subtracted in the bitrate chart; None = unknown (chart includes audio)
         # only the samples the page does not have yet (?h=<how many it has>)
         "history": job.get("history", [])[request.args.get("h", 0, type=int):],
         "history_total": len(job.get("history", [])),

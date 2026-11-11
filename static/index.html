@@ -387,7 +387,7 @@
         <summary>Andamento della codifica</summary>
         <div class="chart-box"><div class="chart-title"><span>Velocità di codifica (fotogrammi al secondo)</span><b id="chartFpsNow"></b></div><canvas id="chartFps"></canvas></div>
         <div class="chart-box"><div class="chart-title"><span>Velocità rispetto al tempo reale (x)</span><b id="chartSpeedNow"></b></div><canvas id="chartSpeed"></canvas></div>
-        <div class="chart-box"><div class="chart-title"><span>Bitrate del video (kb/s): <i style="color:var(--accent)">istantaneo</i> · <i>medio</i></span><b id="chartBitrateNow"></b></div><canvas id="chartBitrate"></canvas></div>
+        <div class="chart-box"><div class="chart-title"><span><span id="chartBitrateTitle">Bitrate del video (kb/s)</span>: <i style="color:var(--accent)">istantaneo</i> · <i>medio</i></span><b id="chartBitrateNow"></b></div><canvas id="chartBitrate"></canvas></div>
       </details>
       <div class="log" id="log"></div>
     </div>
@@ -1217,6 +1217,11 @@ function pollStatus(jobId) {
       histSeries = histSeries.concat(data.history); histCount = data.history_total; renderCharts();
     }
     renderStats(data);
+    // ffmpeg reports the bitrate of the whole file: the server subtracts the (constant) audio, say so
+    document.getElementById('chartBitrateTitle').textContent =
+      data.audio_kbps === null || data.audio_kbps === undefined ? 'Bitrate del file, video + audio (kb/s)'
+      : data.audio_kbps > 0 ? `Bitrate del video (kb/s, audio da ${Math.round(data.audio_kbps)} kb/s sottratto)`
+      : 'Bitrate del video (kb/s)';
     document.getElementById('progressBar').style.width = data.progress + '%';
     document.getElementById('progressLabel').textContent = data.progress + '%';
     document.getElementById('gpuWarning').hidden = !(data.gpu_warning && data.status === 'running' && !gpuWarnDismissed);

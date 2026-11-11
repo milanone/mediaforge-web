@@ -96,6 +96,44 @@ class History(unittest.TestCase):
         self.assertEqual(len(self.job["history"]), 4)
         self.assertIsNone(self.job["history"][1]["inst_kbps"])    # its reference had no time
 
+    def test_the_audio_is_taken_off_the_bitrate_of_the_whole_file(self):
+        """ffmpeg's size=/bitrate= are those of the whole output file (measured on Loki: video 1786 + audio 1455 =
+        3247 kbps, ffmpeg said 3245): the chart must show the video, not video + audio."""
+        self.job["audio_kbps"] = 1408.0
+        self.sample(time_s=100, size=10 * 1024 ** 2, t_offset=0)
+        self.sample(time_s=110, size=10 * 1024 ** 2 + 3_000_000, t_offset=1)    # 3 MB in 10 s = 2400 kbps in total
+        last = self.job["history"][-1]
+        self.assertAlmostEqual(last["inst_kbps"], 2400.0 - 1408.0, places=3)
+        self.assertAlmostEqual(last["avg_kbps"], 2000.0 - 1408.0)    # sample() reports bitrate=2000 for the file
+
+    def test_the_bitrate_never_goes_negative_after_taking_the_audio_off(self):
+        self.job["audio_kbps"] = 1408.0
+        self.sample(time_s=100, size=10 * 1024 ** 2, t_offset=0)
+        self.sample(time_s=110, size=10 * 1024 ** 2 + 1_000_000, t_offset=1)    # 800 kbps in total, below the audio
+        self.assertEqual(self.job["history"][-1]["inst_kbps"], 0.0)
+
+    def test_inst_bitrate_without_audio_is_unchanged(self):
+        self.job["audio_kbps"] = 0
+        self.sample(time_s=100, size=10 * 1024 ** 2, t_offset=0)
+        self.sample(time_s=110, size=10 * 1024 ** 2 + 1_250_000, t_offset=1)    # 1.25 MB in 10 s = 1000 kbps
+        self.assertAlmostEqual(self.job["history"][-1]["inst_kbps"], 1000.0, places=3)
+        self.assertAlmostEqual(self.job["history"][-1]["avg_kbps"], 2000.0)
+
+    def test_which_audio_is_subtracted(self):
+        probe = {"streams": [
+            {"codec_type": "video", "index": 0},
+            {"codec_type": "audio", "index": 1, "bit_rate": "768000"},
+            {"codec_type": "audio", "index": 2, "tags": {"BPS": "640000"}},
+            {"codec_type": "audio", "index": 3}]}                           # no declared bitrate
+        f = web.audio_output_kbps
+        self.assertEqual(f({"audio_indices": [0, 1]}, probe), 1408.0)        # copied: the declared bitrates
+        self.assertIsNone(f({}, probe))                                      # a copied track with no bitrate: unknown
+        self.assertEqual(f({"audio_indices": [1]}, probe), 640.0)
+        self.assertEqual(f({"audio_indices": []}, probe), 0.0)               # no audio in the output
+        self.assertEqual(f({"audio_mode": "aac", "audio_indices": [0, 1]}, probe), 256.0)     # re-encoded: the default
+        self.assertEqual(f({"audio_mode": "ac3", "audio_bitrate": "448", "audio_indices": [0]}, probe), 448.0)
+        self.assertIsNone(f({"audio_only": True}, probe))
+
     def test_history_is_capped(self):
         self.job["history"] = [{"pass": 1, "time_s": 0, "size": 0}] * web.HISTORY_MAX
         self.job["_hist_t"] = 0

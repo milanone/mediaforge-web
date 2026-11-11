@@ -60,6 +60,17 @@ prediction). Tried with `hevc_qsv` on a Windows PC (the local copy of the page o
 as the desktop); not tried on gaia. `record_progress()` had a latent bug found by this: a sample with `time=N/A` made the
 next one fail with `float - None`; fixed, test added.
 
+The live bitrate chart shows the VIDEO bitrate: ffmpeg's `size=` and `bitrate=` are those of the whole output file (measured on
+a 30 s Loki clip, video QSV + two E-AC3 tracks copied: ffmpeg said 3245 kbps, video 1786 + audio 1455 from the packets;
+a real encode showed "media 3628" in the chart against a true video bitrate of 2093), so `audio_output_kbps()` computes the
+audio that ends up in the file (declared bitrate of each copied track, chosen bitrate of each re-encoded one; None if a copied
+track has no declared bitrate or the job is audio-only) and `record_progress()` subtracts it from both series (never below 0;
+pass 1 of a 2-pass run writes no audio, so it is 0 there). The page title says "audio da N kb/s sottratto", or "video + audio"
+when it is unknown. It assumes constant-bitrate audio (AC-3, E-AC-3, AAC): not right for TrueHD, FLAC or DTS-HD. Early samples
+of a short job are off because ffmpeg writes the audio before the video; on a film it fades. The chart's "media" is also the mean
+of samples taken every 10 s of wall time, not of film time, so slow (complex) scenes weigh more: it is an indication, and the real
+video bitrate is the one in the final message ("Bitrate output").
+
 GPU decoder warning: if ffmpeg prints a line of `GPU_DECODE_ERRORS` (the decoder is dropping frames but ffmpeg would
 still exit with 0), `run_ffmpeg_watchdog(watch_gpu=True)` raises `job["gpu_warning"]` and does NOT stop anything: software
 encoding on gaia is very slow, so the page asks the user (continue / stop / `/api/retry_software` = redo everything
