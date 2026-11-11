@@ -69,6 +69,8 @@ AVAILABLE_ENCODERS = [
     {"value": v, "label": l} for v, l in CANDIDATE_ENCODERS
     if v == "libx265" or encoder_works(v)
 ]
+COPY_VIDEO = "copy"   # codec value of "Copia originale": -c:v copy, every video option is off
+AVAILABLE_ENCODERS.append({"value": COPY_VIDEO, "label": "Copia originale (nessuna ricodifica)"})
 
 
 def resolve_bin_path(rel_path: str, source_type: str) -> Path:
@@ -102,6 +104,88 @@ def real_video_bitrate(path: Path, duration):
         return round(total * 8 / duration) if total > 0 else None
     except Exception:
         return None
+
+
+def read_video_packets(path: Path, timeout: int = 600) -> list:
+    """(time s, size bytes) of every packet of the first video stream, sorted by time (same as the desktop app's
+    read_video_packets): container-level demuxing, no decoding. The time is the pts, or the dts if there is no pts."""
+    r = subprocess.run(
+        [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,dts_time,size",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    out = []
+    for line in r.stdout.splitlines():
+        parts = line.split(",")
+        if len(parts) < 3:
+            continue
+        t = parts[0] if parts[0] not in ("", "N/A") else parts[1]
+        try:
+            out.append((float(t), int(parts[2])))
+        except ValueError:
+            continue
+    out.sort()
+    return out
+
+
+def bucket_bitrates(packets: list, step: float, duration: float = None) -> list:
+    """Exact video bitrate over the film time: [(start s, kbps)] for consecutive intervals of `step` seconds (same
+    as the desktop app's bucket_bitrates). The last interval is divided by its real length, and skipped if < 1 s."""
+    if not packets or step <= 0:
+        return []
+    t0 = packets[0][0]
+    total = max(duration or 0.0, packets[-1][0] - t0)
+    n = max(1, math.ceil(total / step - 1e-9))
+    sums = [0] * n
+    for t, size in packets:
+        sums[min(n - 1, int((t - t0) // step))] += size
+    out = []
+    for i, s in enumerate(sums):
+        length = min(step, total - i * step)
+        if length >= 1.0:
+            out.append((i * step, s * 8 / length / 1000))
+    return out
+
+
+def bitrate_chart_rows(job, step, with_source=False):
+    """Rows [(start, end, kbps, source_kbps|None)] of a finished job; the packets are cached in the job."""
+    dst = Path(job["dst"])
+    if not dst.exists():
+        raise FileNotFoundError("file di output non trovato")
+    if "_packets" not in job:
+        job["_packets"] = read_video_packets(dst)
+    packets = job["_packets"]
+    duration = job.get("duration")
+    pts = bucket_bitrates(packets, step, duration)
+    src_pts = {}
+    if with_source:
+        if "_src_packets" not in job:
+            job["_src_packets"] = read_video_packets(Path(job["src"]), timeout=1800)
+        src_pts = dict(bucket_bitrates(job["_src_packets"], step, duration))
+    total = max(duration or 0.0, packets[-1][0] - packets[0][0]) if packets else 0.0
+    return [(s, min(s + step, total), k, src_pts.get(s)) for s, k in pts]
+
+
+def bitrate_csv_text(rows, with_source=False):
+    head = "start_s;end_s;kbps" + (";source_kbps" if with_source else "")
+    lines = [head]
+    for s, e, k, sk in rows:
+        line = f"{s:.0f};{e:.0f};{k:.1f}"
+        if with_source:
+            line += ";" + ("" if sk is None else f"{sk:.1f}")
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def save_bitrate_csv(job):
+    """Writes <output>_bitrate.csv (1-minute steps) next to the finished file; failures are silent (it is a bonus)."""
+    try:
+        rows = bitrate_chart_rows(job, 60)
+        if rows:
+            dst = Path(job["dst"])
+            dst.with_name(dst.stem + "_bitrate.csv").write_text(bitrate_csv_text(rows), encoding="utf-8")
+            job["bitrate_csv"] = True
+    except Exception:
+        pass
 
 
 def declared_video_bitrate(video):
@@ -486,7 +570,9 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
             for i in sub_indices:
                 cmd += ["-map", f"0:s:{i}"]
 
-    filters = build_filters(opts, video)
+    codec = opts.get("codec", "hevc_qsv")
+    copy_video = codec == COPY_VIDEO   # "Copia originale": the video stream is passed through, no filter applies
+    filters = [] if copy_video else build_filters(opts, video)
     if plan == "decode":
         ten = "10" in str(video.get("pix_fmt"))
         filters = ["hwdownload", "format=p010le" if ten else "format=nv12"] + filters
@@ -497,14 +583,17 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
     if filters:
         cmd += ["-vf", ",".join(filters)]
 
-    codec = opts.get("codec", "hevc_qsv")
     quality = str(opts.get("quality", 23))
     preset = opts.get("preset") if opts.get("preset") in PRESETS else None
     # Target average bitrate (single-pass VBR) instead of constant quality when
     # opts["bitrate_kbps"] is set; same behaviour as the desktop app.
-    bitrate = opts.get("bitrate_kbps")
+    bitrate = None if copy_video else opts.get("bitrate_kbps")
     rate = ["-b:v", f"{int(bitrate)}k"] if bitrate else None
-    if codec in ("hevc_qsv", "h264_qsv"):
+    if copy_video:
+        cmd += ["-c:v", "copy"]
+        if dst.suffix.lower() == ".mp4" and video and video.get("codec_name") == "hevc":
+            cmd += ["-tag:v", "hvc1"]   # QuickTime/Apple needs hvc1 for HEVC in mp4
+    elif codec in ("hevc_qsv", "h264_qsv"):
         cmd += ["-c:v", codec] + (rate or ["-global_quality", quality])
         if preset:
             cmd += ["-preset", preset]
@@ -514,7 +603,7 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
         cmd += ["-c:v", "libx265"] + (rate or ["-crf", quality]) + ["-preset", preset or "medium"]
     else:
         cmd += ["-c:v", codec] + (rate or ["-global_quality", quality])
-    if opts.get("pass_num"):
+    if opts.get("pass_num") and not copy_video:
         # 2-pass (libx265 only, see run_encode): same command for both passes
         cmd += ["-pass", str(opts["pass_num"]), "-passlogfile", str(opts["passlog"])]
 
@@ -522,31 +611,35 @@ def build_cmd(src: Path, dst: Path, opts: dict, probe: dict, hw: bool = True):
     if codec in ("hevc_qsv",) and dst.suffix.lower() == ".mp4":
         cmd += ["-tag:v", "hvc1"]
 
-    # Il video e' sempre ricodificato in questa app (nessuna opzione "copia"
-    # per il codec video): vedi STATS_TAGS_MKV, "-map_metadata 0" copierebbe
-    # alla cieca i tag statistici del sorgente anche al nuovo bitrate/peso.
-    for tag in STATS_TAGS_MKV:
-        cmd += ["-metadata:s:v:0", f"{tag}="]
+    # Di norma il video e' ricodificato: vedi STATS_TAGS_MKV, "-map_metadata 0" copierebbe
+    # alla cieca i tag statistici del sorgente anche al nuovo bitrate/peso. Con "Copia originale"
+    # i tag restano validi (stesso flusso), a meno di un trim che ne cambia la durata reale.
+    if not copy_video or trim_attivo:
+        for tag in STATS_TAGS_MKV:
+            cmd += ["-metadata:s:v:0", f"{tag}="]
 
     # Annota i parametri di codifica usati (encoder/CRF, look-ahead, ed ogni
     # filtro/impostazione applicata rispetto ai default - risoluzione, aspect
     # ratio, fps, flip, poi l'audio piu' sotto): utile per ricordarsi in
     # futuro come e' stato prodotto il file senza doverlo ririlevare da
     # MediaInfo. Stessa idea della versione desktop (github.com/milanone/MediaForge).
-    nota_codifica = [f"{codec} " + (f"bitrate={int(bitrate)}k" + (" 2-pass" if opts.get("pass_num") else "")
-                                    if bitrate else f"CRF={quality}")]
-    if opts.get("look_ahead", True) and codec not in ("libx265",):
+    if copy_video:
+        nota_codifica = ["video copy"]
+    else:
+        nota_codifica = [f"{codec} " + (f"bitrate={int(bitrate)}k" + (" 2-pass" if opts.get("pass_num") else "")
+                                        if bitrate else f"CRF={quality}")]
+    if not copy_video and opts.get("look_ahead", True) and codec not in ("libx265",):
         nota_codifica.append("look-ahead")
-    if opts.get("resolution_cap"):
+    if not copy_video and opts.get("resolution_cap"):
         nota_codifica.append(f"max {opts['resolution_cap']}p")
-    ar_mode = opts.get("ar_mode") or "none"
+    ar_mode = "none" if copy_video else (opts.get("ar_mode") or "none")
     if ar_mode != "none":
         nota_codifica.append(f"{ar_mode} {opts.get('ar_ratio', '')}".strip())
-    if opts.get("fps"):
+    if not copy_video and opts.get("fps"):
         nota_codifica.append(f"fps={opts['fps']}")
-    if opts.get("flip") == "h":
+    if not copy_video and opts.get("flip") == "h":
         nota_codifica.append("hflip")
-    elif opts.get("flip") == "v":
+    elif not copy_video and opts.get("flip") == "v":
         nota_codifica.append("vflip")
 
     audio_mode = opts.get("audio_mode", "copy")
@@ -960,6 +1053,7 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
                 out_duration = float(ffprobe_json(dst_path).get("format", {}).get("duration") or 0) or duration
                 job["output_bitrate"] = real_video_bitrate(dst_path, out_duration)
                 job["output_size"] = dst_path.stat().st_size
+                threading.Thread(target=save_bitrate_csv, args=(job,), daemon=True).start()
                 # last: the status poll must not see "done" before bitrate/size are set
                 job["status"] = "done"
             else:
@@ -1502,7 +1596,7 @@ def predict():
     src_path = resolve_bin_path(data.get("path", ""), data.get("source", "library"))
     if not src_path.exists():
         return jsonify({"error": "file not found"}), 404
-    if data.get("audio_only") or data.get("bitrate_kbps"):
+    if data.get("audio_only") or data.get("bitrate_kbps") or data.get("codec") == COPY_VIDEO:
         return jsonify({"error": "Funziona con il video in modalita' qualita' costante (CRF)."}), 400
     probe = ffprobe_json(src_path)
     video, _, _, duration = simplify_streams(probe)
@@ -1582,6 +1676,30 @@ def status(job_id):
         "history": job.get("history", [])[request.args.get("h", 0, type=int):],
         "history_total": len(job.get("history", [])),
     })
+
+
+@app.route("/api/bitrate_chart/<job_id>")
+def bitrate_chart(job_id):
+    """Exact video bitrate per interval of a finished job (?step=60, ?source=1 adds the source, ?csv=1 downloads)."""
+    job = jobs.get(job_id)
+    if not job or job.get("kind") == "predict":
+        return jsonify({"error": "not found"}), 404
+    if job["status"] != "done":
+        return jsonify({"error": "la conversione non e' finita"}), 400
+    step = request.args.get("step", 60, type=int)
+    if not 2 <= step <= 3600:
+        step = 60
+    with_source = request.args.get("source") == "1"
+    try:
+        rows = bitrate_chart_rows(job, step, with_source)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if request.args.get("csv") == "1":
+        name = Path(job["dst"]).stem + "_bitrate.csv"
+        return Response(bitrate_csv_text(rows, with_source), mimetype="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return jsonify({"step": step, "saved_csv": bool(job.get("bitrate_csv")),
+                    "points": [{"start": s, "end": e, "kbps": k, "source_kbps": sk} for s, e, k, sk in rows]})
 
 
 @app.route("/api/stop/<job_id>", methods=["POST"])

@@ -71,6 +71,14 @@ of a short job are off because ffmpeg writes the audio before the video; on a fi
 of samples taken every 10 s of wall time, not of film time, so slow (complex) scenes weigh more: it is an indication, and the real
 video bitrate is the one in the final message ("Bitrate output").
 
+Bitrate over time (exact): when a job is `done`, `GET /api/bitrate_chart/<id>?step=60` returns the video bitrate per interval from
+the packet sizes of the output (`read_video_packets()` / `bucket_bitrates()`, the same functions as the desktop; the packets are
+cached in the job), `&source=1` adds the source (reads the whole source file: slow, off by default), `&csv=1` downloads it
+(`start_s;end_s;kbps[;source_kbps]`). The page draws it under the result (`#minuteBox`, step 30 s / 1 / 2 / 5 min, hover, mean
+weighted by interval length = the real video bitrate). After every encode a thread also writes `<output>_bitrate.csv` (1-minute
+step) next to the output file (`save_bitrate_csv()`, silent on failure). Tests: `tests/test_bitrate_chart.py`. Checked with a
+synthetic 3 min clip on a local server; not tried on gaia nor on a real film.
+
 GPU decoder warning: if ffmpeg prints a line of `GPU_DECODE_ERRORS` (the decoder is dropping frames but ffmpeg would
 still exit with 0), `run_ffmpeg_watchdog(watch_gpu=True)` raises `job["gpu_warning"]` and does NOT stop anything: software
 encoding on gaia is very slow, so the page asks the user (continue / stop / `/api/retry_software` = redo everything
@@ -112,6 +120,8 @@ enforces the "same" rows.
 | GPU path | direct QSV first (`-hwaccel qsv`, as the web), then `d3d11va` + `hwmap`, then software | `-hwaccel qsv`, then software | same first choice; the extra d3d11va step exists only on Windows |
 | Default CRF for a 4K source scaled down (QSV) | 16 (`QSV_CRF_DOWNSCALED_4K`, via `crf_suggerito(source_side=)`) | 16 (`QSV_CRF_DOWNSCALED_4K` in `index.html`; the page now also feeds the OUTPUT size after the resolution cap, as the desktop does) | same (tested through node) |
 | Predict bitrate (N clips of X min, random or typed times, mean/min/max, predicted size) | `predict_bitrate()` | `/api/predict`, `run_predict()` | same method (start-time and summary functions tested against each other); the web runs it as a hidden job and has no software fallback beyond software decoding |
+| Bitrate over time of the finished file (exact, per interval, CSV) | `BitrateChartWindow`, `read_video_packets()`, `bucket_bitrates()` (CSV autosave not yet) | `/api/bitrate_chart`, same two functions, CSV autosave `<output>_bitrate.csv` | same method; desktop autosave still to do |
+| Video "copy" (no re-encode) | `vcodec == "copy"` (already there; the DAR fix still works with copy) | codec "Copia originale" (`COPY_VIDEO`, `-c:v copy`); the page disables quality, bitrate, 2-pass, Prevedi bitrate, resolution, FPS, flip, preset, look-ahead and aspect ratio (the DAR fix is not offered with copy here); container, trim, audio, subtitles stay | same idea; web is stricter on purpose (all video options off) |
 | Encoders | QSV, AMF, NVENC, VideoToolbox, x265, SVT-AV1 | QSV, x265 | different on purpose |
 | Mux, Chapters, batch folder / library, upload, background jobs | desktop only / web only | | different on purpose |
 

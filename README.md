@@ -20,6 +20,8 @@ encoding rules, different plumbing (files on the server, jobs in the background,
   a 4K source scaled down gets CRF 16 (the detailed scenes lose most of their fine detail at higher values)
 - "Prevedi bitrate": encodes a few short clips (default 3 of 1 minute, random or chosen times, with a button that draws a new set of random points) with the current
   settings and shows the bitrate of each, mean/min/max and the predicted video size; an estimate, not a promise
+- "Copia originale" in the video codec menu: the video stream is copied as it is (no re-encode) and every video option is switched off; audio, subtitles, trim and container still apply
+- After each encode: a chart of the exact video bitrate over time (from the packet sizes of the finished file; 30 s to 5 min steps, optional overlay of the source, CSV download), and the same values saved as `<output>_bitrate.csv` next to the file. The live bitrate chart shows the video only (the constant audio bitrate is subtracted)
 - "Verifica FPS originali": counts the real (non-duplicated) frames on 5 short clips and sets the FPS accordingly
 - Resolution cap, aspect ratio (crop / pad / DAR tag / stretch), flip, trim, audio re-encode or copy, subtitles
   (copy / SRT / none / mux afterwards), audio-only mode
