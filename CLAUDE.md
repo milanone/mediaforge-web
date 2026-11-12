@@ -74,7 +74,7 @@ video bitrate is the one in the final message ("Bitrate output").
 Bitrate over time (exact): when a job is `done`, `GET /api/bitrate_chart/<id>?step=60` returns the video bitrate per interval from
 the packet sizes of the output (`read_video_packets()` / `bucket_bitrates()`, the same functions as the desktop; the packets are
 cached in the job), `&source=1` adds the source (reads the whole source file: slow, off by default), `&csv=1` downloads it
-(`start_s;end_s;kbps[;source_kbps]`). The page draws it under the result (`#minuteBox`, step 30 s / 1 / 2 / 5 min, hover, mean
+(comma-separated `time_s,kbps[,source_kbps]`, one time column = the middle of each interval). The page draws it under the result (`#minuteBox`, step 30 s / 1 / 2 / 5 min, hover, mean
 weighted by interval length = the real video bitrate). After every encode a thread also writes `<output>_bitrate.csv` (1-minute
 step) next to the output file (`save_bitrate_csv()`, silent on failure). Tests: `tests/test_bitrate_chart.py`. Checked with a
 synthetic 3 min clip on a local server; not tried on gaia nor on a real film.

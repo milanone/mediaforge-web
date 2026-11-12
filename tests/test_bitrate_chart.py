@@ -44,8 +44,9 @@ class Bucketing(unittest.TestCase):
 
     def test_csv_text(self):
         rows = [(0, 60, 1234.56, None), (60, 90, 800.0, 2000.0)]
-        self.assertEqual(web.bitrate_csv_text(rows), "start_s;end_s;kbps\n0;60;1234.6\n60;90;800.0\n")
-        self.assertEqual(web.bitrate_csv_text(rows, True).splitlines()[2], "60;90;800.0;2000.0")
+        # comma-separated, one time column = the middle of each interval (60-90 s -> 75 s)
+        self.assertEqual(web.bitrate_csv_text(rows), "time_s,kbps\n30.0,1234.6\n75.0,800.0\n")
+        self.assertEqual(web.bitrate_csv_text(rows, True).splitlines()[2], "75.0,800.0,2000.0")
 
 
 @unittest.skipUnless(have_x265(), "ffmpeg with libx265 not available")
@@ -82,7 +83,7 @@ class ChartRoute(unittest.TestCase):
         self.assertTrue(all(p["source_kbps"] is not None for p in d["points"]))
         r = self.client.get(f"/api/bitrate_chart/{self.job}?step=10&source=1&csv=1")
         self.assertIn("attachment", r.headers["Content-Disposition"])
-        self.assertEqual(r.get_data(as_text=True).splitlines()[0], "start_s;end_s;kbps;source_kbps")
+        self.assertEqual(r.get_data(as_text=True).splitlines()[0], "time_s,kbps,source_kbps")
 
     def test_csv_is_saved_next_to_the_output(self):
         dst = Path(web.jobs[self.job]["dst"])
@@ -91,7 +92,7 @@ class ChartRoute(unittest.TestCase):
         while not csv.exists() and time.time() < end:
             time.sleep(0.3)
         self.assertTrue(csv.exists())
-        self.assertEqual(csv.read_text(encoding="utf-8").splitlines()[0], "start_s;end_s;kbps")
+        self.assertEqual(csv.read_text(encoding="utf-8").splitlines()[0], "time_s,kbps")
 
     def test_job_answer_says_where_the_csv_is(self):
         d = self.client.get(f"/api/bitrate_chart/{self.job}?step=10").get_json()
@@ -112,7 +113,7 @@ class ChartRoute(unittest.TestCase):
         self.assertIsNone(d["points"][0]["source_kbps"])
         r = self.client.get(q + "&csv=1")
         self.assertIn('filename="chart_test_clip_bitrate.csv"', r.headers["Content-Disposition"])
-        self.assertEqual(r.get_data(as_text=True).splitlines()[0], "start_s;end_s;kbps")
+        self.assertEqual(r.get_data(as_text=True).splitlines()[0], "time_s,kbps")
         self.assertEqual(self.client.get("/api/file_bitrate_chart?source=library&path=nope.mkv").status_code, 404)
 
     def test_unknown_and_unfinished_jobs(self):

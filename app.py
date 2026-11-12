@@ -195,12 +195,14 @@ def file_bitrate_job(path):
 
 
 def bitrate_csv_text(rows, with_source=False):
-    head = "start_s;end_s;kbps" + (";source_kbps" if with_source else "")
+    """Comma-separated: `time_s,kbps[,source_kbps]`. One time column, the middle of each interval (where the chart
+    draws the point), in seconds."""
+    head = "time_s,kbps" + (",source_kbps" if with_source else "")
     lines = [head]
     for s, e, k, sk in rows:
-        line = f"{s:.0f};{e:.0f};{k:.1f}"
+        line = f"{(s + e) / 2:.1f},{k:.1f}"
         if with_source:
-            line += ";" + ("" if sk is None else f"{sk:.1f}")
+            line += "," + ("" if sk is None else f"{sk:.1f}")
         lines.append(line)
     return "\n".join(lines) + "\n"
 

@@ -180,9 +180,7 @@
     </div>
 
     <div class="selected-file" id="selectedFile"></div>
-    <div class="file-info" id="fileInfo"></div>
-    <button type="button" id="fileChartBtn" onclick="loadFileChart()" style="margin-top:6px" hidden>📈 Bitrate nel tempo del file</button>
-    <video id="sourcePreview" class="video-preview" controls hidden></video>
+    <div class="file-info" id="fileInfo"></div>    <video id="sourcePreview" class="video-preview" controls hidden></video>
 
     <div class="streams-box" id="streamsBox" hidden>
       <div class="streams-col">
@@ -416,6 +414,9 @@
       <button class="primary" style="width:auto; flex:1; margin-top:0" onclick="runMaintenance('fix_bitrate')">
         Correggi tag bitrate (calcola quello reale)
       </button>
+      <button class="primary" id="fileChartBtn" style="width:auto; flex:1; margin-top:0" onclick="loadFileChart()">
+        📈 Bitrate nel tempo del file (grafico e CSV)
+      </button>
     </div>
   </div>
   <div class="footer">
@@ -629,7 +630,6 @@ async function selectFile(rowEl, sel) {
   document.getElementById('selectedFile').textContent = 'Selezionato: ' + (sel.displayName || sel.path.split('/').pop());
   document.getElementById('optionsCard').hidden = false;
   document.getElementById('toolsCard').hidden = false;
-  document.getElementById('fileChartBtn').hidden = false;
 
   const preview = document.getElementById('sourcePreview');
   preview.src = '/api/stream?source=' + sel.source + '&path=' + encodeURIComponent(sel.path);
