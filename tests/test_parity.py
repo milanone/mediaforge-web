@@ -172,6 +172,66 @@ console.log(JSON.stringify(cases.map(([w, h, cap]) => {
         self.assertEqual(out[0][2], 14)   # 4K -> 1080p
         self.assertEqual(out[2][2], 20)   # 4K kept at 4K
 
+    LIVE_LINES = [
+        "frame=  240 fps= 48 q=-1.0 size=    1024KiB time=00:00:10.00 bitrate= 838.9kbits/s speed=1.98x",
+        "frame=    1 fps=0.0 q=0.0 size=       0KiB time=N/A bitrate=N/A speed=N/A",
+        "frame= 9000 fps= 25 q=-0.0 Lsize=   20MiB time=01:02:03.45 bitrate=2700.1kbits/s speed=1.5x",
+        "Stream mapping:",
+    ]
+
+    def test_live_progress_parsing_matches_desktop(self):
+        for line in self.LIVE_LINES:
+            self.assertEqual(web.parse_progress_line(line), self.desk.parse_progress_line(line), line)
+
+    def test_live_audio_subtraction_matches_desktop(self):
+        v = {"codec_type": "video"}
+        a1 = {"codec_type": "audio", "bit_rate": "640000"}
+        a2 = {"codec_type": "audio", "tags": {"BPS": "384000"}}
+        a3 = {"codec_type": "audio"}
+        cases = [  # (streams, web opts, desktop opts)
+            ([v, a1, a2], {"audio_mode": "copy"}, {"audio": "copy"}),
+            ([v, a1, a2], {"audio_mode": "ac3"}, {"audio": "ac3"}),
+            ([v, a1, a2], {"audio_mode": "aac"}, {"audio": "aac"}),
+            ([v, a1, a2], {"audio_mode": "mp3"}, {"audio": "mp3"}),
+            ([v, a1, a2], {"audio_mode": "copy", "audio_indices": [0]}, {"audio": "copy", "stream_map": [0, 1]}),
+            ([v, a1, a2], {"audio_mode": "ac3", "audio_indices": [1]}, {"audio": "ac3", "stream_map": [0, 2]}),
+            ([v, a1, a3], {"audio_mode": "copy"}, {"audio": "copy"}),               # not declared -> None
+            ([v, a1, a2], {"audio_only": True}, {"audio": "copy", "mode": "audio"}),  # audio-only job -> None
+            ([v], {"audio_mode": "copy"}, {"audio": "copy"}),
+        ]
+        for streams, wopts, dopts in cases:
+            self.assertEqual(web.audio_output_kbps(wopts, {"streams": streams}),
+                             self.desk.audio_output_kbps(dopts, {"streams": streams}), (wopts, dopts))
+
+    def test_live_samples_match_desktop(self):
+        """Same sequence of progress lines -> same samples (instantaneous and average video bitrate with the audio
+        subtracted, fps, speed, time axis), including a pass change."""
+        import queue
+        from unittest import mock
+
+        def line(t, kib):
+            return f"frame= 1 fps=24 q=0 size={kib}KiB time=00:{t // 60:02d}:{t % 60:02d}.00 bitrate=999.0kbits/s speed=1.1x"
+        feed = [(1000.0 + 10 * i, 1, line(10 + 10 * i, 500 + 600 * i)) for i in range(5)]
+        feed += [(1000.0 + 50 + 10 * i, 2, line(10 + 10 * i, 100 + 300 * i)) for i in range(4)]
+        feed.insert(1, (1003.0, 1, line(11, 520)))          # too soon after the previous one: both skip it
+        job = {"audio_kbps": 384.0, "started_at": 1000.0, "pass_no": 1}
+        live = self.desk.LiveStats(queue.Queue())
+        live.t0 = 1000.0
+        live.next_segment(384.0)
+        seg = 1
+        for now, pass_no, ln in feed:
+            if pass_no != seg:
+                seg = pass_no
+                job["pass_no"] = pass_no
+                live.next_segment(384.0)
+            with mock.patch.object(web.time, "time", return_value=now):
+                web.record_progress(job, web.parse_progress_line(ln))
+            live.add(ln, now)
+        keys = ("t", "pass", "time_s", "fps", "speed", "avg_kbps", "inst_kbps", "size")
+        self.assertEqual(len(job["history"]), len(live.history))
+        for w_s, d_s in zip(job["history"], live.history):
+            self.assertEqual({k: w_s[k] for k in keys}, {k: d_s[k] for k in keys})
+
     def test_predict_bitrate_helpers_match_desktop(self):
         import random
         for seed in range(20):
