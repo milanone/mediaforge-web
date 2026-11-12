@@ -98,6 +98,9 @@
     display: none; text-align: center; background: var(--ok); color: #06251a;
     padding: 12px; border-radius: 8px; margin-top: 14px; text-decoration: none; font-weight: 600;
   }
+  .params { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 0.88rem; margin: 6px 0 0; }
+  .params dt { color: var(--muted); }
+  .params dd { margin: 0; word-break: break-word; }
   .status-msg { font-size: 0.85rem; margin-top: 10px; }
   .status-msg.err { color: var(--err); }
   .status-msg.ok { color: var(--ok); }
@@ -156,7 +159,51 @@
     </div>
   </div>
 
-  <div class="card">
+  <!-- The running (or just finished) conversion: while it runs this is the only card on the page -->
+  <div class="card" id="jobCard" hidden>
+    <h2 id="jobTitle">Conversione in corso</h2>
+    <dl class="params" id="jobParams"></dl>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="progress-label" id="progressLabel">In corso...</div>
+      <div class="progress-stats" id="progressStats"></div>
+      <button class="primary" id="stopBtn" style="background:var(--err); display:none" onclick="stopEncode()">Interrompi</button>
+      <button class="primary" id="finishBtn" style="background:var(--muted); display:none; margin-top:6px" onclick="finishEncode()">Ferma e tieni il file parziale</button>
+      <div class="warn-box" id="gpuWarning" hidden style="flex-direction:column; align-items:stretch; margin-top:12px">
+        <div>⚠ Il decoder della GPU sta scartando fotogrammi: il file risultera' danneggiato (video accorciato, audio sfasato).
+          Riprovare in software evita il problema ma e' molto piu' lento.</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button type="button" onclick="gpuWarnContinue()">Continua comunque</button>
+          <button type="button" onclick="stopEncode()" style="background:var(--err)">Interrompi</button>
+          <button type="button" onclick="retrySoftware()">Riprova in software (lento)</button>
+        </div>
+      </div>
+      <details class="charts" id="chartsBox" hidden open>
+        <summary>Andamento della codifica</summary>
+        <div class="chart-box"><div class="chart-title"><span>Velocità di codifica (fotogrammi al secondo)</span><b id="chartFpsNow"></b></div><canvas id="chartFps"></canvas></div>
+        <div class="chart-box"><div class="chart-title"><span>Velocità rispetto al tempo reale (x)</span><b id="chartSpeedNow"></b></div><canvas id="chartSpeed"></canvas></div>
+        <div class="chart-box"><div class="chart-title"><span><span id="chartBitrateTitle">Bitrate del video (kb/s)</span>: <i style="color:var(--accent)">istantaneo</i> · <i>medio</i></span><b id="chartBitrateNow"></b></div><canvas id="chartBitrate"></canvas></div>
+      </details>
+      <div class="log" id="log"></div>
+    </div>
+
+    <div class="status-msg" id="statusMsg"></div>
+    <a class="download-btn" id="downloadBtn" href="#">Scarica file convertito</a>
+    <video id="outputPreview" class="video-preview" controls hidden></video>
+    <details class="charts" id="minuteBox" hidden open>
+      <summary>Bitrate del video nel tempo (valori esatti, dal file finito)</summary>
+      <div class="chart-title" style="margin-top:6px;gap:10px;flex-wrap:wrap">
+        <span>Intervallo <select id="minuteStep"><option value="30">30 s</option><option value="60" selected>1 min</option><option value="120">2 min</option><option value="300">5 min</option></select>
+          <label style="margin-left:8px"><input type="checkbox" id="minuteSource"> confronta con l'originale (lento)</label></span>
+        <a id="minuteCsv" href="#" download>Scarica CSV</a>
+      </div>
+      <div class="chart-box"><div class="chart-title"><span id="minuteInfo">Calcolo in corso…</span><b id="minuteHover"></b></div><canvas id="chartMinute" style="height:120px"></canvas></div>
+    </details>
+    <button class="primary" id="newJobBtn" onclick="newJob()" hidden>Nuova conversione</button>
+  </div>
+
+  <div class="card" id="sourceCard">
     <h2>Sorgente</h2>
     <div class="tabs">
       <button class="tab-btn active" id="tabLibraryBtn" onclick="switchTab('library')">Libreria</button>
@@ -180,7 +227,8 @@
     </div>
 
     <div class="selected-file" id="selectedFile"></div>
-    <div class="file-info" id="fileInfo"></div>    <video id="sourcePreview" class="video-preview" controls hidden></video>
+    <div class="file-info" id="fileInfo"></div>
+    <video id="sourcePreview" class="video-preview" controls hidden></video>
 
     <div class="streams-box" id="streamsBox" hidden>
       <div class="streams-col">
@@ -366,44 +414,9 @@
     <div class="preview-warnings" id="previewWarnings"></div>
 
     <button class="primary" id="encodeBtn" onclick="startEncode()">Converti</button>
-
-    <div class="progress-wrap" id="progressWrap">
-      <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
-      <div class="progress-label" id="progressLabel">In corso...</div>
-      <div class="progress-stats" id="progressStats"></div>
-      <button class="primary" id="stopBtn" style="background:var(--err); display:none" onclick="stopEncode()">Interrompi</button>
-      <button class="primary" id="finishBtn" style="background:var(--muted); display:none; margin-top:6px" onclick="finishEncode()">Ferma e tieni il file parziale</button>
-      <div class="warn-box" id="gpuWarning" hidden style="flex-direction:column; align-items:stretch; margin-top:12px">
-        <div>⚠ Il decoder della GPU sta scartando fotogrammi: il file risultera' danneggiato (video accorciato, audio sfasato).
-          Riprovare in software evita il problema ma e' molto piu' lento.</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap">
-          <button type="button" onclick="gpuWarnContinue()">Continua comunque</button>
-          <button type="button" onclick="stopEncode()" style="background:var(--err)">Interrompi</button>
-          <button type="button" onclick="retrySoftware()">Riprova in software (lento)</button>
-        </div>
-      </div>
-      <details class="charts" id="chartsBox" hidden open>
-        <summary>Andamento della codifica</summary>
-        <div class="chart-box"><div class="chart-title"><span>Velocità di codifica (fotogrammi al secondo)</span><b id="chartFpsNow"></b></div><canvas id="chartFps"></canvas></div>
-        <div class="chart-box"><div class="chart-title"><span>Velocità rispetto al tempo reale (x)</span><b id="chartSpeedNow"></b></div><canvas id="chartSpeed"></canvas></div>
-        <div class="chart-box"><div class="chart-title"><span><span id="chartBitrateTitle">Bitrate del video (kb/s)</span>: <i style="color:var(--accent)">istantaneo</i> · <i>medio</i></span><b id="chartBitrateNow"></b></div><canvas id="chartBitrate"></canvas></div>
-      </details>
-      <div class="log" id="log"></div>
-    </div>
-
-    <div class="status-msg" id="statusMsg"></div>
-    <a class="download-btn" id="downloadBtn" href="#">Scarica file convertito</a>
-    <video id="outputPreview" class="video-preview" controls hidden></video>
-    <details class="charts" id="minuteBox" hidden open>
-      <summary>Bitrate del video nel tempo (valori esatti, dal file finito)</summary>
-      <div class="chart-title" style="margin-top:6px;gap:10px;flex-wrap:wrap">
-        <span>Intervallo <select id="minuteStep"><option value="30">30 s</option><option value="60" selected>1 min</option><option value="120">2 min</option><option value="300">5 min</option></select>
-          <label style="margin-left:8px"><input type="checkbox" id="minuteSource"> confronta con l'originale (lento)</label></span>
-        <a id="minuteCsv" href="#" download>Scarica CSV</a>
-      </div>
-      <div class="chart-box"><div class="chart-title"><span id="minuteInfo">Calcolo in corso…</span><b id="minuteHover"></b></div><canvas id="chartMinute" style="height:120px"></canvas></div>
-    </details>
   </div>
+
+  <div class="card" id="fileChartCard" hidden></div>
 
   <div class="card" id="toolsCard" hidden>
     <h2>Strumenti (remux veloce, nessuna ricodifica)</h2>
@@ -1078,13 +1091,53 @@ function runMaintenance(mode) {
   runJob({ source: selected.source, path: selected.path, mode: mode });
 }
 
+// While a conversion runs the page shows only that conversion (parameters, progress, buttons); "Nuova conversione"
+// brings the library and the options back. The job card also keeps the result of the last one until then.
+let fileChartShown = false;
+function setRunView(on) {
+  document.getElementById('jobCard').hidden = !on;
+  document.getElementById('sourceCard').hidden = on;
+  document.getElementById('optionsCard').hidden = on || !selected;
+  document.getElementById('toolsCard').hidden = on || !selected;
+  document.getElementById('fileChartCard').hidden = on || !fileChartShown;
+}
+function renderParams(params) {
+  const dl = document.getElementById('jobParams');
+  dl.textContent = '';
+  (params || []).forEach(([k, v]) => {
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k; dd.textContent = v;
+    dl.append(dt, dd);
+  });
+}
+function endRun(title) {
+  document.getElementById('jobTitle').textContent = title;
+  document.getElementById('newJobBtn').hidden = false;
+  document.getElementById('encodeBtn').disabled = false;
+  showStop(false);
+}
+function newJob() {
+  document.getElementById('minuteBox').hidden = true;
+  document.getElementById('newJobBtn').hidden = true;
+  setRunView(false);
+  window.scrollTo(0, 0);
+}
+
 function runJob(opts) {
   document.getElementById('encodeBtn').disabled = true;
   document.getElementById('statusMsg').textContent = '';
   document.getElementById('downloadBtn').style.display = 'none';
+  document.getElementById('outputPreview').hidden = true;
   document.getElementById('minuteBox').hidden = true;
+  document.getElementById('newJobBtn').hidden = true;
+  document.getElementById('jobTitle').textContent = 'Conversione in corso';
   document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('progressBar').style.width = '0%';
+  document.getElementById('progressLabel').textContent = 'In corso...';
   document.getElementById('log').textContent = '';
+  renderParams([]);
+  setRunView(true);
+  window.scrollTo(0, 0);
   resetStats();
   currentJobId = null;
   const stopBtn = document.getElementById('stopBtn');
@@ -1097,11 +1150,11 @@ function runJob(opts) {
     if (data.error) {
       document.getElementById('statusMsg').textContent = data.error;
       document.getElementById('statusMsg').className = 'status-msg err';
-      document.getElementById('encodeBtn').disabled = false;
-      showStop(false);
+      endRun('Conversione non avviata');
       return;
     }
     currentJobId = data.job_id;
+    renderParams(data.params);
     pollStatus(data.job_id);
   });
 }
@@ -1199,10 +1252,19 @@ function renderCharts() {
 // Exact video bitrate per interval of the finished file (from the packet sizes, computed by the server)
 // Two sources: the job that just finished, or any file picked in the library ("Bitrate nel tempo del file")
 let minuteJob = null, minuteFile = null, minutePts = [], minuteToken = 0;
-function loadMinuteChart(jobId) { minuteJob = jobId; minuteFile = null; return reloadMinute(); }
+// the chart box lives in the job card for a job and in its own card (above the tools) for a file
+function loadMinuteChart(jobId) {
+  minuteJob = jobId; minuteFile = null; fileChartShown = false;
+  const jc = document.getElementById('jobCard');
+  jc.insertBefore(document.getElementById('minuteBox'), document.getElementById('newJobBtn'));
+  return reloadMinute();
+}
 function loadFileChart() {
   if (!selected) return;
   minuteJob = null; minuteFile = { source: selected.source, path: selected.path };
+  const card = document.getElementById('fileChartCard');
+  card.appendChild(document.getElementById('minuteBox'));
+  fileChartShown = true; card.hidden = false;
   return reloadMinute();
 }
 async function reloadMinute() {
@@ -1361,20 +1423,17 @@ function pollStatus(jobId) {
         // say where the CSV went, in the message the user reads when the encode ends
         if (d && d.csv_path) document.getElementById('statusMsg').textContent += ` CSV del bitrate salvato in ${d.csv_path}.`;
       });
-      document.getElementById('encodeBtn').disabled = false;
-      showStop(false);
+      endRun(data.partial ? 'Conversione fermata: file parziale conservato' : 'Conversione completata');
     } else if (data.status === 'error') {
       clearInterval(pollTimer);
       document.getElementById('statusMsg').textContent = 'Errore durante la conversione, controlla il log.';
       document.getElementById('statusMsg').className = 'status-msg err';
-      document.getElementById('encodeBtn').disabled = false;
-      showStop(false);
+      endRun('Conversione non riuscita');
     } else if (data.status === 'cancelled') {
       clearInterval(pollTimer);
       document.getElementById('statusMsg').textContent = 'Conversione interrotta.';
       document.getElementById('statusMsg').className = 'status-msg err';
-      document.getElementById('encodeBtn').disabled = false;
-      showStop(false);
+      endRun('Conversione interrotta');
     }
     } catch (e) {
       // a failed request (server restarting, network): try again at the next tick
@@ -1389,7 +1448,8 @@ fetch('/api/jobs').then(r => r.json()).then(list => {
   if (!list.length) return;
   const j = list[0];
   currentJobId = j.job_id;
-  document.getElementById('optionsCard').hidden = false;
+  renderParams(j.params);
+  setRunView(true);
   document.getElementById('encodeBtn').disabled = true;
   document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('statusMsg').textContent = 'Conversione in corso: ' + j.src + ' → ' + j.out_name +

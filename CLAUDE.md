@@ -79,6 +79,14 @@ weighted by interval length = the real video bitrate). After every encode a thre
 step) next to the output file (`save_bitrate_csv()`, silent on failure). Tests: `tests/test_bitrate_chart.py`. Checked with a
 synthetic 3 min clip on a local server; not tried on gaia nor on a real film.
 
+Running view (page only; the desktop has its own Encode tab and log): while a conversion runs the page shows ONLY the job card
+(`#jobCard`: title, the parameters, progress bar, stats, "Interrompi" / "Ferma e tieni il file parziale", GPU warning, live
+charts, log); the library, options and tools cards are hidden (`setRunView()`). When it ends the card keeps the result (download,
+preview, bitrate chart, CSV path) and shows "Nuova conversione", which brings the other cards back. The parameters come from the
+server (`describe_job()`, stored in `job["params"]`, returned by `/api/encode`, `/api/status` and `/api/jobs`), so a page opened
+during an encode (another PC, reload) reattaches with the same view (`/api/jobs` at load). The bitrate chart box (`#minuteBox`)
+moves between the job card and `#fileChartCard` (the per-file button).
+
 The jobs live in memory, so a restart of the server (every deploy) makes `/api/bitrate_chart/<id>` answer 404 for jobs already
 finished: found out the hard way on 2026-11-12, when a deploy right after a Loki encode left the page with "not found" for the
 chart and the CSV link. Two remedies: `GET /api/file_bitrate_chart?source=library|upload&path=..&step=60[&csv=1]` gives the same

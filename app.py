@@ -1573,6 +1573,69 @@ def play(job_id):
     return send_from_directory(dst.parent, dst.name, as_attachment=False, conditional=True)
 
 
+SUBS_MODE_LABELS = {"copy": "Copia", "srt": "Converti in SRT", "no": "Escludi", "mux": "Muxa a fine codifica"}
+
+
+def describe_job(data, probe, src_path, out_name):
+    """[label, value] pairs that say what a job does, in the words of the options page: shown while it runs (the page
+    hides the options then) and again to whoever opens the page during the encode."""
+    video, _audio, _subs, _dur = simplify_streams(probe)
+    src = src_path.name
+    if video:
+        src += f" ({video.get('codec_name')} {video.get('width')}x{video.get('height')})"
+    rows = [["Sorgente", src], ["Uscita", out_name]]
+    mode = data.get("mode")
+    if mode == "fix_hvc1":
+        return rows + [["Operazione", "Correzione del tag HEVC (hvc1): remux, nessuna ricodifica"]]
+    if mode == "fix_bitrate":
+        return rows + [["Operazione", "Correzione del tag bitrate con il valore reale: remux, nessuna ricodifica"]]
+
+    def audio_rows():
+        am = data.get("audio_mode", "copy")
+        if am in AUDIO_DEFAULT_BITRATE:
+            try:
+                kbps = int(data.get("audio_bitrate") or AUDIO_DEFAULT_BITRATE[am])
+            except (TypeError, ValueError):
+                kbps = AUDIO_DEFAULT_BITRATE[am]
+            what = f"{am.upper()} {kbps} kb/s"
+        else:
+            what = "Copia originale"
+        idx = data.get("audio_indices")
+        return [["Audio", what + ("" if idx is None else f" ({len(idx)} tracce scelte)")]]
+
+    if data.get("audio_only"):
+        return rows + [["Operazione", "Solo audio"]] + audio_rows()
+    codec = data.get("codec", "hevc_qsv")
+    rows.append(["Codec video", next((e["label"] for e in AVAILABLE_ENCODERS if e["value"] == codec), codec)])
+    if codec != COPY_VIDEO:
+        try:
+            kbps = int(data.get("bitrate_kbps") or 0)
+        except (TypeError, ValueError):
+            kbps = 0
+        rows.append(["Controllo", f"Bitrate medio {kbps} kb/s" + (" · 2 passate" if data.get("two_pass") else "")
+                     if kbps else f"Qualità costante, CRF {data.get('quality')}"])
+        if data.get("preset"):
+            rows.append(["Preset", str(data["preset"])])
+        if data.get("look_ahead") and codec.endswith("_qsv"):      # the option exists only for the QSV encoders
+            rows.append(["Look-ahead", "sì"])
+        if data.get("resolution_cap"):
+            rows.append(["Risoluzione massima", f"{data['resolution_cap']}p"])
+        if data.get("fps"):
+            rows.append(["FPS", str(data["fps"])])
+        if data.get("flip"):
+            rows.append(["Capovolgi", str(data["flip"])])
+        if data.get("ar_mode") and data["ar_mode"] != "none":
+            rows.append(["Aspect ratio", f"{data['ar_mode']} {data.get('ar_ratio') or ''}".strip()])
+    rows += audio_rows()
+    sub_idx = data.get("sub_indices")
+    rows.append(["Sottotitoli", SUBS_MODE_LABELS.get(data.get("subs_mode", "copy"), "Copia")
+                 + ("" if sub_idx is None else f" ({len(sub_idx)} tracce scelte)")])
+    if data.get("start") or data.get("duration"):
+        rows.append(["Taglio", f"da {data.get('start') or '0:00:00'}" + (f", durata {data['duration']}" if data.get("duration") else "")])
+    rows.append(["Contenitore", container_ext(data, src_path).lstrip(".")])
+    return rows
+
+
 @app.route("/api/encode", methods=["POST"])
 def encode():
     data = request.get_json(force=True)
@@ -1615,11 +1678,12 @@ def encode():
         "src": str(src_path), "out_name": out_name, "dst": str(dst_path),
         "output_bitrate": None, "output_size": None, "started_at": time.time(),
         "audio_kbps": audio_output_kbps(data, probe),   # set from the start so the page does not flicker
+        "params": describe_job(data, probe, src_path, out_name),
     }
 
     t = threading.Thread(target=run_encode, args=(job_id, src_path, dst_path, data, probe), daemon=True)
     t.start()
-    return jsonify({"job_id": job_id})
+    return jsonify({"job_id": job_id, "params": jobs[job_id]["params"]})
 
 
 @app.route("/api/predict", methods=["POST"])
@@ -1686,7 +1750,7 @@ def predict_points():
 def list_jobs():
     """Lavori in corso (per riagganciare la pagina dopo una chiusura o da un altro PC)."""
     return jsonify([{"job_id": jid, "src": Path(j["src"]).name, "out_name": j["out_name"],
-                     "progress": j["progress"]}
+                     "progress": j["progress"], "params": j.get("params")}
                     for jid, j in jobs.items() if j["status"] == "running" and j.get("kind") != "predict"])
 
 
@@ -1706,6 +1770,7 @@ def status(job_id):
         "duration": job.get("duration"),
         "stats": job.get("stats"),
         "predict": job.get("predict"),
+        "params": job.get("params"),
         "audio_kbps": job.get("audio_kbps"),   # subtracted in the bitrate chart; None = unknown (chart includes audio)
         # only the samples the page does not have yet (?h=<how many it has>)
         "history": job.get("history", [])[request.args.get("h", 0, type=int):],
