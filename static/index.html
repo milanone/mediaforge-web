@@ -1210,7 +1210,9 @@ function drawChart(canvasId, nowId, series, unit, decimals) {
   if (!w) return;
   cv.width = w * dpr; cv.height = hgt * dpr;
   const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, hgt);
-  const pts = histSeries;
+  // the first sample of every pass is taken while the encoder starts up (fps, speed, bitrate far from the steady
+  // values) and squashes the rest of the chart: not drawn (same rule as the desktop, live_chart_points)
+  const pts = histSeries.filter((p, i) => i > 0 && p.pass === histSeries[i - 1].pass);
   const vals = [];
   series.forEach(s => pts.forEach(p => { if (p[s.key] != null) vals.push(p[s.key]); }));
   if (pts.length < 2 || !vals.length) return;
