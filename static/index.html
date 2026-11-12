@@ -874,15 +874,18 @@ async function loadProbe() {
 // verticale (da telefono) è trattato come l'equivalente orizzontale.
 // Ordine di grandezza misurato: ogni punto di CRF in meno costa circa +25% di
 // bitrate (23->22 su 4K: 3,05 -> 3,82 Mbps).
-const CRF_PUNTI = [[854, 16], [1280, 18], [1920, 20], [3840, 22]];
-// Sorgente 4K (lato lungo >= 3000) ridotta a una risoluzione piu' bassa: CRF 16 invece della curva (20 a 1080p).
+// Abbassati di 2 l'11-11-2026 (erano 16/18/20/22): un 4K tenuto a 4K (Dune Part Two) a CRF 22 dava 2700 kb/s, troppo
+// pochi (si vogliono 3500-4000); circa -30% di bitrate ogni +2 CRF. Misurati davvero solo i punti 4K e 4K ridotto.
+const CRF_PUNTI = [[854, 14], [1280, 16], [1920, 18], [3840, 20]];
+// Sorgente 4K (lato lungo >= 3000) ridotta a una risoluzione piu' bassa: CRF 14 invece della curva (18 a 1080p).
 // Misurato il 2026-11-10 su Loki S01E01, 3 spezzoni da 60 s, 4K HDR -> 1080p, hevc_qsv: il dettaglio conservato
 // (energia delle alte frequenze rispetto al sorgente ridotto, relativa al CRF 8) scende a circa un terzo a CRF 14
 // e a un quinto a CRF 16 nelle scene dettagliate; a CRF 22 il bitrate medio era ~570 kb/s. Scelta dell'autore: 16
-// (risparmia spazio) o 14 (conserva il dettaglio), default 16. Non misurato: sorgente 4K tenuta a 4K.
+// (risparmia spazio) o 14 (conserva il dettaglio): scelto 14 dopo una codifica completa (circa 2100 kb/s, ben
+// dettagliato e ancora piccolo).
 // Stesse costanti della versione desktop (QSV_SOURCE_4K_MIN, QSV_CRF_DOWNSCALED_4K).
 const QSV_SOURCE_4K_MIN = 3000;
-const QSV_CRF_DOWNSCALED_4K = 16;
+const QSV_CRF_DOWNSCALED_4K = 14;
 // Dimensioni dopo il limite di risoluzione (come risoluzione_effettiva() nel desktop).
 function effectiveDims(width, height, cap) {
   if (!width || !height || !cap) return [width, height];
@@ -892,7 +895,7 @@ function effectiveDims(width, height, cap) {
 function crfSuggerito(width, height, codec, sourceSide) {
   const lato = Math.max(width || 0, height || 0);
   let base;
-  if (lato <= 0) base = 20;
+  if (lato <= 0) base = 18;
   else if (lato <= CRF_PUNTI[0][0]) base = CRF_PUNTI[0][1];
   else if (lato >= CRF_PUNTI[CRF_PUNTI.length - 1][0]) base = CRF_PUNTI[CRF_PUNTI.length - 1][1];
   else {

@@ -146,7 +146,7 @@ class Parity(unittest.TestCase):
         self.assertEqual(web.STATS_TAGS_MKV, self.desk.STATS_TAGS_MKV)
 
     def test_default_crf_for_4k_source_scaled_down_matches_desktop(self):
-        """Same default (16) for a 4K source scaled down; the web feeds the OUTPUT size (after the resolution
+        """Same default (14) for a 4K source scaled down; the web feeds the OUTPUT size (after the resolution
         cap) plus the source side, like the desktop."""
         if not shutil.which("node"):
             self.skipTest("node not available")
@@ -169,8 +169,8 @@ console.log(JSON.stringify(cases.map(([w, h, cap]) => {
             side = max(w, h)
             self.assertEqual(hevc, self.desk.crf_suggerito(dw, dh, "hevc_qsv", side), (w, h, cap))
             self.assertEqual(av1, self.desk.crf_suggerito(dw, dh, "av1_qsv", side), (w, h, cap))
-        self.assertEqual(out[0][2], 16)   # 4K -> 1080p
-        self.assertEqual(out[2][2], 22)   # 4K kept at 4K: the old curve
+        self.assertEqual(out[0][2], 14)   # 4K -> 1080p
+        self.assertEqual(out[2][2], 20)   # 4K kept at 4K
 
     def test_predict_bitrate_helpers_match_desktop(self):
         import random
