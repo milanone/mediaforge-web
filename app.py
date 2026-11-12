@@ -165,6 +165,35 @@ def bitrate_chart_rows(job, step, with_source=False):
     return [(s, min(s + step, total), k, src_pts.get(s)) for s, k in pts]
 
 
+def display_path(p):
+    """Path as the page shows it: relative to the library ("/torrent-downloads/...") or to the output folder
+    ("/output/..."); just the file name for anything else."""
+    p = Path(p).resolve()
+    for base, label in ((LIBRARY_DIR, ()), (OUTPUT_DIR, ("output",))):
+        try:
+            return "/" + "/".join(label + p.relative_to(base.resolve()).parts)
+        except ValueError:
+            continue
+    return p.name
+
+
+# Packets of the files whose chart was asked for from the page (not from a job): a few entries, oldest dropped, and
+# a file that changed (size or time) is read again
+_file_jobs = {}
+
+
+def file_bitrate_job(path):
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    job = _file_jobs.get(key)
+    if job is None:
+        if len(_file_jobs) >= 3:
+            _file_jobs.pop(next(iter(_file_jobs)))
+        duration = float(ffprobe_json(path).get("format", {}).get("duration") or 0) or None
+        job = _file_jobs[key] = {"dst": str(path), "duration": duration}
+    return job
+
+
 def bitrate_csv_text(rows, with_source=False):
     head = "start_s;end_s;kbps" + (";source_kbps" if with_source else "")
     lines = [head]
@@ -182,8 +211,10 @@ def save_bitrate_csv(job):
         rows = bitrate_chart_rows(job, 60)
         if rows:
             dst = Path(job["dst"])
-            dst.with_name(dst.stem + "_bitrate.csv").write_text(bitrate_csv_text(rows), encoding="utf-8")
+            csv_path = dst.with_name(dst.stem + "_bitrate.csv")
+            csv_path.write_text(bitrate_csv_text(rows), encoding="utf-8")
             job["bitrate_csv"] = True
+            job["bitrate_csv_path"] = display_path(csv_path)
     except Exception:
         pass
 
@@ -1053,7 +1084,8 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
                 out_duration = float(ffprobe_json(dst_path).get("format", {}).get("duration") or 0) or duration
                 job["output_bitrate"] = real_video_bitrate(dst_path, out_duration)
                 job["output_size"] = dst_path.stat().st_size
-                threading.Thread(target=save_bitrate_csv, args=(job,), daemon=True).start()
+                job["_csv_thread"] = threading.Thread(target=save_bitrate_csv, args=(job,), daemon=True)
+                job["_csv_thread"].start()
                 # last: the status poll must not see "done" before bitrate/size are set
                 job["status"] = "done"
             else:
@@ -1687,6 +1719,9 @@ def bitrate_chart(job_id):
         return jsonify({"error": "not found"}), 404
     if job["status"] != "done":
         return jsonify({"error": "la conversione non e' finita"}), 400
+    saver = job.get("_csv_thread")
+    if saver is not None:
+        saver.join(timeout=900)     # it reads the same packets: wait, then use its cache, and know if the CSV is saved
     step = request.args.get("step", 60, type=int)
     if not 2 <= step <= 3600:
         step = 60
@@ -1699,8 +1734,30 @@ def bitrate_chart(job_id):
         name = Path(job["dst"]).stem + "_bitrate.csv"
         return Response(bitrate_csv_text(rows, with_source), mimetype="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
-    return jsonify({"step": step, "saved_csv": bool(job.get("bitrate_csv")),
+    return jsonify({"step": step, "saved_csv": bool(job.get("bitrate_csv")), "csv_path": job.get("bitrate_csv_path"),
                     "points": [{"start": s, "end": e, "kbps": k, "source_kbps": sk} for s, e, k, sk in rows]})
+
+
+@app.route("/api/file_bitrate_chart")
+def file_bitrate_chart():
+    """Same chart for any video file of the library or the uploads, no job needed (it keeps working after a restart
+    of the server, which forgets the jobs). ?source=library|upload&path=..&step=60[&csv=1]."""
+    path = resolve_bin_path(request.args.get("path", ""), request.args.get("source", "library"))
+    if not path.is_file():
+        return jsonify({"error": "file not found"}), 404
+    step = request.args.get("step", 60, type=int)
+    if not 2 <= step <= 3600:
+        step = 60
+    try:
+        rows = bitrate_chart_rows(file_bitrate_job(path), step)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if request.args.get("csv") == "1":
+        return Response(bitrate_csv_text(rows), mimetype="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{path.stem}_bitrate.csv"'})
+    saved = path.with_name(path.stem + "_bitrate.csv")
+    return jsonify({"step": step, "saved_csv": saved.exists(), "csv_path": display_path(saved) if saved.exists() else None,
+                    "points": [{"start": s, "end": e, "kbps": k, "source_kbps": None} for s, e, k, _sk in rows]})
 
 
 @app.route("/api/stop/<job_id>", methods=["POST"])

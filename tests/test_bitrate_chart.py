@@ -93,6 +93,28 @@ class ChartRoute(unittest.TestCase):
         self.assertTrue(csv.exists())
         self.assertEqual(csv.read_text(encoding="utf-8").splitlines()[0], "start_s;end_s;kbps")
 
+    def test_job_answer_says_where_the_csv_is(self):
+        d = self.client.get(f"/api/bitrate_chart/{self.job}?step=10").get_json()
+        self.assertTrue(d["saved_csv"])
+        self.assertTrue(d["csv_path"].startswith("/") and d["csv_path"].endswith("_bitrate.csv"), d["csv_path"])
+
+    def test_display_path(self):
+        self.assertEqual(web.display_path(web.LIBRARY_DIR / "a" / "b c.mkv"), "/a/b c.mkv")
+        self.assertEqual(web.display_path(web.OUTPUT_DIR / "x.mkv"), "/output/x.mkv")
+        self.assertEqual(web.display_path(Path(tempfile.gettempdir()) / "elsewhere.csv"), "elsewhere.csv")
+
+    def test_chart_of_a_library_file_without_any_job(self):
+        """Works after the server forgot the jobs (a restart): only the file is needed."""
+        q = f"/api/file_bitrate_chart?source=library&path={self.name}&step=5"
+        d = self.client.get(q).get_json()
+        self.assertEqual([p["start"] for p in d["points"]], [0.0, 5.0, 10.0, 15.0])
+        self.assertTrue(all(p["kbps"] > 0 for p in d["points"]))
+        self.assertIsNone(d["points"][0]["source_kbps"])
+        r = self.client.get(q + "&csv=1")
+        self.assertIn('filename="chart_test_clip_bitrate.csv"', r.headers["Content-Disposition"])
+        self.assertEqual(r.get_data(as_text=True).splitlines()[0], "start_s;end_s;kbps")
+        self.assertEqual(self.client.get("/api/file_bitrate_chart?source=library&path=nope.mkv").status_code, 404)
+
     def test_unknown_and_unfinished_jobs(self):
         self.assertEqual(self.client.get("/api/bitrate_chart/nope").status_code, 404)
         web.jobs["running_x"] = {"status": "running", "log": []}

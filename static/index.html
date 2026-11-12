@@ -181,6 +181,7 @@
 
     <div class="selected-file" id="selectedFile"></div>
     <div class="file-info" id="fileInfo"></div>
+    <button type="button" id="fileChartBtn" onclick="loadFileChart()" style="margin-top:6px" hidden>📈 Bitrate nel tempo del file</button>
     <video id="sourcePreview" class="video-preview" controls hidden></video>
 
     <div class="streams-box" id="streamsBox" hidden>
@@ -628,6 +629,7 @@ async function selectFile(rowEl, sel) {
   document.getElementById('selectedFile').textContent = 'Selezionato: ' + (sel.displayName || sel.path.split('/').pop());
   document.getElementById('optionsCard').hidden = false;
   document.getElementById('toolsCard').hidden = false;
+  document.getElementById('fileChartBtn').hidden = false;
 
   const preview = document.getElementById('sourcePreview');
   preview.src = '/api/stream?source=' + sel.source + '&path=' + encodeURIComponent(sel.path);
@@ -1195,21 +1197,40 @@ function renderCharts() {
   drawChart('chartBitrate', 'chartBitrateNow', [{ key: 'inst_kbps', color: '--accent', width: 1.6 }, { key: 'avg_kbps', color: '--muted', width: 1.2 }], 'kb/s', 0);
 }
 // Exact video bitrate per interval of the finished file (from the packet sizes, computed by the server)
-let minuteJob = null, minutePts = [];
-async function loadMinuteChart(jobId) {
-  minuteJob = jobId;
-  const step = document.getElementById('minuteStep').value, src = document.getElementById('minuteSource').checked;
-  const q = `?step=${step}&source=${src ? 1 : 0}`;
+// Two sources: the job that just finished, or any file picked in the library ("Bitrate nel tempo del file")
+let minuteJob = null, minuteFile = null, minutePts = [], minuteToken = 0;
+function loadMinuteChart(jobId) { minuteJob = jobId; minuteFile = null; return reloadMinute(); }
+function loadFileChart() {
+  if (!selected) return;
+  minuteJob = null; minuteFile = { source: selected.source, path: selected.path };
+  return reloadMinute();
+}
+async function reloadMinute() {
+  const tok = ++minuteToken, isJob = !!minuteJob;
+  const step = document.getElementById('minuteStep').value;
+  const src = isJob && document.getElementById('minuteSource').checked;
+  document.getElementById('minuteSource').parentElement.style.display = isJob ? '' : 'none';   // no source to compare for a file
+  const base = isJob ? `/api/bitrate_chart/${minuteJob}?`
+    : `/api/file_bitrate_chart?source=${minuteFile.source}&path=${encodeURIComponent(minuteFile.path)}&`;
+  const q = `${base}step=${step}` + (isJob ? `&source=${src ? 1 : 0}` : '');   // "source" means two things: only for jobs
   document.getElementById('minuteBox').hidden = false;
   document.getElementById('minuteInfo').textContent = 'Calcolo in corso…';
-  document.getElementById('minuteCsv').href = `/api/bitrate_chart/${jobId}${q}&csv=1`;
+  document.getElementById('minuteCsv').href = q + '&csv=1';
   try {
-    const d = await (await fetch(`/api/bitrate_chart/${jobId}${q}`)).json();
-    if (minuteJob !== jobId) return;
-    if (d.error) { document.getElementById('minuteInfo').textContent = d.error; minutePts = []; drawMinuteChart(); return; }
-    minutePts = d.points; minuteSaved = !!d.saved_csv;
+    const r = await fetch(q), d = await r.json();
+    if (tok !== minuteToken) return null;
+    if (d.error) {
+      // the server forgets the finished jobs when it restarts (an update): the file itself is still there
+      document.getElementById('minuteInfo').textContent = r.status === 404 && isJob
+        ? 'Il server è stato riavviato e non ricorda più questa conversione: il grafico e il CSV si possono rifare ' +
+          'selezionando il file e premendo «Bitrate nel tempo del file».'
+        : d.error;
+      minutePts = []; drawMinuteChart(); return null;
+    }
+    minutePts = d.points; minuteCsvPath = d.csv_path || null;
     drawMinuteChart();
-  } catch (e) { document.getElementById('minuteInfo').textContent = 'Errore nel calcolo del grafico'; }
+    return d;
+  } catch (e) { document.getElementById('minuteInfo').textContent = 'Errore nel calcolo del grafico'; return null; }
 }
 function drawMinuteChart() {
   const cv = document.getElementById('chartMinute'), dpr = window.devicePixelRatio || 1;
@@ -1238,11 +1259,11 @@ function drawMinuteChart() {
   let tot = 0, len = 0; pts.forEach(p => { tot += p.kbps * (p.end - p.start); len += p.end - p.start; });
   document.getElementById('minuteInfo').textContent =
     `media ${Math.round(tot / len)} kb/s · min ${Math.round(Math.min(...vals))} · max ${Math.round(Math.max(...vals))}` +
-    (hasSrc ? ' · grigio: originale' : '') + (minuteSaved ? ' · CSV salvato accanto al file' : '');
+    (hasSrc ? ' · grigio: originale' : '') + (minuteCsvPath ? ` · CSV salvato: ${minuteCsvPath}` : '');
 }
-let minuteSaved = false;
-document.getElementById('minuteStep').addEventListener('change', () => minuteJob && loadMinuteChart(minuteJob));
-document.getElementById('minuteSource').addEventListener('change', () => minuteJob && loadMinuteChart(minuteJob));
+let minuteCsvPath = null;
+document.getElementById('minuteStep').addEventListener('change', () => (minuteJob || minuteFile) && reloadMinute());
+document.getElementById('minuteSource').addEventListener('change', () => minuteJob && reloadMinute());
 document.getElementById('chartMinute').addEventListener('mousemove', ev => {
   if (!minutePts.length) return;
   const cv = ev.target, r = cv.getBoundingClientRect(), tEnd = minutePts[minutePts.length - 1].end || 1;
@@ -1336,7 +1357,10 @@ function pollStatus(jobId) {
       const outPreview = document.getElementById('outputPreview');
       outPreview.src = '/api/play/' + jobId;
       outPreview.hidden = false;
-      loadMinuteChart(jobId);
+      loadMinuteChart(jobId).then(d => {
+        // say where the CSV went, in the message the user reads when the encode ends
+        if (d && d.csv_path) document.getElementById('statusMsg').textContent += ` CSV del bitrate salvato in ${d.csv_path}.`;
+      });
       document.getElementById('encodeBtn').disabled = false;
       showStop(false);
     } else if (data.status === 'error') {

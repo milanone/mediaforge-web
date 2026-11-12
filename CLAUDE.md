@@ -79,6 +79,15 @@ weighted by interval length = the real video bitrate). After every encode a thre
 step) next to the output file (`save_bitrate_csv()`, silent on failure). Tests: `tests/test_bitrate_chart.py`. Checked with a
 synthetic 3 min clip on a local server; not tried on gaia nor on a real film.
 
+The jobs live in memory, so a restart of the server (every deploy) makes `/api/bitrate_chart/<id>` answer 404 for jobs already
+finished: found out the hard way on 2026-11-12, when a deploy right after a Loki encode left the page with "not found" for the
+chart and the CSV link. Two remedies: `GET /api/file_bitrate_chart?source=library|upload&path=..&step=60[&csv=1]` gives the same
+chart/CSV for any file with no job (the page button "Bitrate nel tempo del file", `loadFileChart()`; the packets of the last 3
+files are cached in `_file_jobs`; no source comparison), and the page now says so instead of "not found". The autosaved CSV
+survives anyway (it is a file next to the output): `csv_path` in the answer, and the end-of-encode message, tell where it is
+(`display_path()`: relative to the library, e.g. `/torrent-downloads/...`, or `/output/...`). Before a deploy, remember that
+finished results open in someone's page are lost.
+
 GPU decoder warning: if ffmpeg prints a line of `GPU_DECODE_ERRORS` (the decoder is dropping frames but ffmpeg would
 still exit with 0), `run_ffmpeg_watchdog(watch_gpu=True)` raises `job["gpu_warning"]` and does NOT stop anything: software
 encoding on gaia is very slow, so the page asks the user (continue / stop / `/api/retry_software` = redo everything
@@ -121,7 +130,7 @@ enforces the "same" rows.
 | Default CRF for a 4K source scaled down (QSV) | 14 (`QSV_CRF_DOWNSCALED_4K`, via `crf_suggerito(source_side=)`) | 14 (`QSV_CRF_DOWNSCALED_4K` in `index.html`; the page now also feeds the OUTPUT size after the resolution cap, as the desktop does) | same (tested through node) |
 | Live charts while encoding (fps, speed, video bitrate instantaneous + average, audio subtracted) | `LiveStats`, `parse_progress_line()`, `audio_output_kbps()`, `LiveChartWindow` (a separate window) | `record_progress()`, `parse_progress_line()`, `audio_output_kbps()`, `drawChart()` (inside the page) | same numbers and rules (tested against each other); the desktop shows them in a window, the web in the page |
 | Predict bitrate (N clips of X min, random or typed times, mean/min/max, predicted size) | `predict_bitrate()` | `/api/predict`, `run_predict()` | same method (start-time and summary functions tested against each other); the web runs it as a hidden job and has no software fallback beyond software decoding |
-| Bitrate over time of the finished file (exact, per interval, CSV) | `BitrateChartWindow`, `read_video_packets()`, `bucket_bitrates()`, autosave `<output>_bitrate.csv` ("Bitrate CSV" checkbox, h:mm:ss times) | `/api/bitrate_chart`, same two functions, autosave `<output>_bitrate.csv` (seconds) | same method; CSV time columns differ (h:mm:ss vs seconds) |
+| Bitrate over time of the finished file (exact, per interval, CSV) | `BitrateChartWindow`, `read_video_packets()`, `bucket_bitrates()`, autosave `<output>_bitrate.csv` ("Bitrate CSV" checkbox, h:mm:ss times) | `/api/bitrate_chart`, same two functions, autosave `<output>_bitrate.csv` (seconds) | same method; CSV time columns differ (h:mm:ss vs seconds). Chart of any file with no job: desktop button "Bitrate chart", web button "Bitrate nel tempo del file" (`/api/file_bitrate_chart`); both say where the CSV was saved |
 | Video "copy" (no re-encode) | `vcodec == "copy"` (already there; the DAR fix still works with copy) | codec "Copia originale" (`COPY_VIDEO`, `-c:v copy`); the page disables quality, bitrate, 2-pass, Prevedi bitrate, resolution, FPS, flip, preset, look-ahead and aspect ratio (the DAR fix is not offered with copy here); container, trim, audio, subtitles stay | same idea; web is stricter on purpose (all video options off) |
 | Encoders | QSV, AMF, NVENC, VideoToolbox, x265, SVT-AV1 | QSV, x265 | different on purpose |
 | Mux, Chapters, batch folder / library, upload, background jobs | desktop only / web only | | different on purpose |
