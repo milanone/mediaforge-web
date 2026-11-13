@@ -1604,7 +1604,7 @@ SUBS_MODE_LABELS = {"copy": "Copia", "srt": "Converti in SRT", "no": "Escludi", 
 def describe_job(data, probe, src_path, out_name):
     """[label, value] pairs that say what a job does, in the words of the options page: shown while it runs (the page
     hides the options then) and again to whoever opens the page during the encode."""
-    video, _audio, _subs, _dur = simplify_streams(probe)
+    video, _audio, source_subs, _dur = simplify_streams(probe)
     src = src_path.name
     if video:
         src += f" ({video.get('codec_name')} {video.get('width')}x{video.get('height')})"
@@ -1653,8 +1653,9 @@ def describe_job(data, probe, src_path, out_name):
             rows.append(["Aspect ratio", f"{data['ar_mode']} {data.get('ar_ratio') or ''}".strip()])
     rows += audio_rows()
     sub_idx = data.get("sub_indices")
-    rows.append(["Sottotitoli", SUBS_MODE_LABELS.get(data.get("subs_mode", "copy"), "Copia")
-                 + ("" if sub_idx is None else f" ({len(sub_idx)} tracce scelte)")])
+    if source_subs:                      # nothing to say about subtitles for a file that has none
+        rows.append(["Sottotitoli", SUBS_MODE_LABELS.get(data.get("subs_mode", "copy"), "Copia")
+                     + ("" if sub_idx is None else f" ({len(sub_idx)} tracce scelte)")])
     if data.get("start") or data.get("duration"):
         rows.append(["Taglio", f"da {data.get('start') or '0:00:00'}" + (f", durata {data['duration']}" if data.get("duration") else "")])
     rows.append(["Contenitore", container_ext(data, src_path).lstrip(".")])

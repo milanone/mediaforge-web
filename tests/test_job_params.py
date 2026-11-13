@@ -16,13 +16,14 @@ os.environ.setdefault("MEDIAFORGE_OUTPUT", os.path.join(_tmp, "output"))
 sys.path.insert(0, str(ROOT))
 import app as web  # noqa: E402
 
-PROBE = {"streams": [{"codec_type": "video", "codec_name": "hevc", "width": 3840, "height": 2160}],
-         "format": {"duration": "100"}}
+VIDEO = {"codec_type": "video", "codec_name": "hevc", "width": 3840, "height": 2160}
+PROBE = {"streams": [VIDEO, {"codec_type": "subtitle", "codec_name": "subrip"}], "format": {"duration": "100"}}
+PROBE_NO_SUBS = {"streams": [VIDEO], "format": {"duration": "100"}}
 SRC = Path("/library/film.mkv")
 
 
-def rows(data, out="film-libx265.mkv"):
-    return dict(web.describe_job(data, PROBE, SRC, out))
+def rows(data, out="film-libx265.mkv", probe=PROBE):
+    return dict(web.describe_job(data, probe, SRC, out))
 
 
 class DescribeJob(unittest.TestCase):
@@ -48,6 +49,10 @@ class DescribeJob(unittest.TestCase):
         self.assertEqual(rows({"codec": "libx265", "quality": 20, "audio_mode": "aac"})["Audio"], "AAC 128 kb/s")
         self.assertEqual(rows({"codec": "libx265", "quality": 20, "audio_indices": [0, 2]})["Audio"],
                          "Copia originale (2 tracce scelte)")
+
+    def test_no_subtitle_row_for_a_file_without_subtitles(self):
+        self.assertIn("Sottotitoli", rows({"codec": "libx265", "quality": 20}))
+        self.assertNotIn("Sottotitoli", rows({"codec": "libx265", "quality": 20}, probe=PROBE_NO_SUBS))
 
     def test_copy_has_no_video_options(self):
         r = rows({"codec": web.COPY_VIDEO, "quality": 20, "preset": "slow"})

@@ -658,7 +658,18 @@ async function selectFile(rowEl, sel) {
   outPreview.hidden = true;
   outPreview.removeAttribute('src');
 
-  await loadProbe();
+  // reading a film (duration, the REAL video bitrate from the packet sizes) takes seconds, minutes on a slow drive:
+  // say so at once, and keep "Converti" off until the file is known (the track lists below are still the old file's)
+  document.getElementById('fileInfo').textContent = 'Lettura del file e verifica del bitrate reale in corso…';
+  document.getElementById('fpsAutoNote').textContent = '';
+  document.getElementById('fpsAutoBox').hidden = true;
+  const encodeBtn = document.getElementById('encodeBtn');
+  encodeBtn.disabled = true;
+  try {
+    await loadProbe();
+  } finally {
+    if (probeToken === probeTokenDone) encodeBtn.disabled = false;   // the latest file is known (not after an error)
+  }
 }
 
 document.getElementById('dropZone').onclick = () => document.getElementById('fileInput').click();
@@ -909,9 +920,26 @@ async function pollPredict(id, quality) {
   }
 }
 
+// the long help of the subtitle menu is its title: kept in data-help while the menu is greyed out with another title
+document.getElementById('subsMode').dataset.help = document.getElementById('subsMode').title;
+let probeToken = 0, probeTokenDone = 0;   // a slow answer for a file that is no longer selected is dropped
 async function loadProbe() {
-  const res = await fetch('/api/probe?source=' + selected.source + '&path=' + encodeURIComponent(selected.path));
-  const data = await res.json();
+  const tok = ++probeToken;
+  try {
+    const res = await fetch('/api/probe?source=' + selected.source + '&path=' + encodeURIComponent(selected.path));
+    const data = await res.json();
+    if (tok !== probeToken) return;
+    if (data.error) {
+      document.getElementById('fileInfo').textContent = 'Impossibile leggere il file: ' + data.error;
+      return;
+    }
+    probeTokenDone = tok;
+    await showProbe(data);
+  } catch (e) {
+    if (tok === probeToken) document.getElementById('fileInfo').textContent = 'Impossibile leggere il file.';
+  }
+}
+async function showProbe(data) {
   probeData = data;
   const fm = document.getElementById('fpsDetectMsg'); if (fm) fm.textContent = '';
   const pm = document.getElementById('predictMsg'); if (pm && !predictJobId) pm.textContent = '';
@@ -945,6 +973,10 @@ async function loadProbe() {
   });
   if (!data.subtitles.length) subBox.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">nessuno</span>';
   document.getElementById('streamsBox').hidden = false;
+  // the subtitle choice means nothing for a file without subtitle tracks: greyed out (usable again for the next file)
+  const subsSel = document.getElementById('subsMode');
+  subsSel.disabled = !data.subtitles.length;
+  subsSel.title = data.subtitles.length ? subsSel.dataset.help : 'Questo file non ha sottotitoli.';
 
   setContainerFromSource();
   updateQualityAuto();
