@@ -1429,6 +1429,18 @@ def parse_rate(text):
         return None
 
 
+def fps_ratio_regular(declared, real):
+    """True when the declared rate is a whole multiple (2x, 3x...) of the real one: the repeats then come in regular runs
+    (A A B B) and dropping them with the fps filter keeps every real frame (tried with 7 phases of the pairs, 50 -> 25).
+    At any other ratio (30 for 24: one repeat every 5 frames, in a pattern that changes from file to file) fps= can take a
+    repeat and skip a good frame (tried: up to 25% of the real frames lost; decimate still lost up to 8%), while keeping
+    the repeats costs about 8% in size: the rate is left alone. Same rule as the desktop (rapporto_fps_regolare)."""
+    if not real:
+        return False
+    r = declared / real
+    return round(r) >= 2 and abs(r - round(r)) <= 0.03
+
+
 _fps_cache = {}   # (path, mtime, size) -> answer: the page asks by itself when a file is selected, measure once
 
 
@@ -1482,6 +1494,8 @@ def detect_fps():
         "duplicates_pct": 0 if no_dups else round((1 - effective / declared) * 100),
         "suggestion": "" if no_dups else suggestion,
         "irregular": (not no_dups) and suggestion is None,
+        # repeats in a whole ratio (60 for 30) can be dropped safely; any other (30 for 24) is left alone
+        "regular": (not no_dups) and suggestion is not None and fps_ratio_regular(declared, match[0]),
     }
     if len(_fps_cache) >= 50:
         _fps_cache.pop(next(iter(_fps_cache)))

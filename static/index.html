@@ -738,6 +738,10 @@ async function detectFps() {
     } else if (!d.suggestion) {
       sel.value = '';
       msg.textContent = `Nessun fotogramma ripetuto: ${dec} fps reali. Lascio "Originale".`;
+    } else if (!d.regular) {
+      sel.value = '';
+      msg.textContent = `Il file dichiara ${dec} fps ma il contenuto è circa ${eff} (${d.duplicates_pct}% di fotogrammi ripetuti). ` +
+        'Lascio "Originale": togliere i ripetuti a questo rapporto può scartare fotogrammi buoni, tenerli costa circa l\'8% di dimensione.';
     } else {
       const opt = [...sel.options].find(o => o.value === d.suggestion);
       sel.value = opt ? d.suggestion : '';
@@ -775,6 +779,10 @@ async function autoCheckFps() {
       btn.hidden = true; box.hidden = false;
     } else if (d.suggestion && document.getElementById('fps').value === d.suggestion) {
       note.textContent = `Il file dichiara ${dec} fps ma ne ha circa ${eff} reali: il limite FPS è già impostato a ${d.suggestion}.`;
+    } else if (d.suggestion && !d.regular) {
+      // repeats that do not come in a whole ratio (24 stored as 30): dropping them can discard good frames
+      note.textContent = `ℹ Il file dichiara ${dec} fps ma il contenuto è circa ${eff} (${d.duplicates_pct}% di fotogrammi ripetuti). ` +
+        'Lo lascio com\'è: togliere i ripetuti a questo rapporto può scartare fotogrammi buoni, tenerli costa circa l\'8% di dimensione.';
     } else if (d.suggestion) {
       const opt = [...document.getElementById('fps').options].find(o => o.value === d.suggestion);
       fpsAutoSuggestion = d.suggestion;

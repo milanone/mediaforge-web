@@ -25,11 +25,21 @@ import app as web  # noqa: E402
 class AutoFps(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        for name, vf in (("dup30.mkv", "fps=30"), ("real24.mkv", "null")):
-            subprocess.run([web.FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24",
+        for name, rate, vf in (("dup30.mkv", 24, "fps=30"), ("real24.mkv", 24, "null"), ("dup50.mkv", 25, "fps=50")):
+            subprocess.run([web.FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=size=320x240:rate={rate}",
                             "-t", "60", "-vf", vf, "-c:v", "libx264", "-pix_fmt", "yuv420p",
                             str(web.LIBRARY_DIR / name)], check=True)
         cls.client = web.app.test_client()
+
+    def test_a_whole_ratio_is_regular_and_can_be_dropped(self):
+        d = self.client.get("/api/detect_fps?source=library&path=dup50.mkv").get_json()
+        self.assertEqual(d["suggestion"], "25")
+        self.assertTrue(d["regular"])
+
+    def test_24_stored_as_30_is_found_but_not_regular(self):
+        d = self.client.get("/api/detect_fps?source=library&path=dup30.mkv").get_json()
+        self.assertEqual(d["suggestion"], "24")
+        self.assertFalse(d["regular"])          # one repeat every 5 frames: left alone
 
     def test_repeated_frames_give_a_suggestion_and_the_answer_is_cached(self):
         d = self.client.get("/api/detect_fps?source=library&path=dup30.mkv").get_json()
@@ -55,8 +65,9 @@ class AutoFps(unittest.TestCase):
         r = desk.classifica_fps(desk.fps_da_frazione(video["avg_frame_rate"]), desk.fps_contenuto(src, 60.0),
                                 desk.analizza_fps(src, video))
         d = self.client.get("/api/detect_fps?source=library&path=dup30.mkv").get_json()
-        self.assertEqual(r["azione"], "limit")
+        self.assertEqual(r["azione"], "keep")
         self.assertEqual(desk.fps_da_frazione(r["std"]), float(d["suggestion"]))
+        self.assertFalse(d["regular"])                       # both leave a 24-as-30 file alone
 
 
 if __name__ == "__main__":
