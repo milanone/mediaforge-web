@@ -36,7 +36,10 @@ encoding rules, different plumbing (files on the server, jobs in the background,
   one time column = the middle of each interval, in seconds: `time_s,kbps[,source_kbps]`); the page says where the CSV was saved
 - "Bitrate nel tempo del file" (Strumenti card): the same chart and CSV for any file of the library, with no job needed, so it also
   works for encodes made before a restart of the server (the server forgets the finished jobs when it restarts)
-- "Verifica FPS originali": counts the real (non-duplicated) frames on 5 short clips and sets the FPS accordingly
+- "Verifica FPS originali": counts the real (non-duplicated) frames on 5 short clips and sets the FPS accordingly. The same
+  measurement runs by itself when a file is selected (the answer is cached per file): if the file has repeated frames (e.g. 24 fps
+  stored at 30) a warning appears at once under the file information, with a button that sets the FPS; nothing is changed by itself
+- The default output container is the source's own (mkv -> mkv, mp4/m4v/mov -> mp4; anything else -> mkv), changeable before converting
 - Resolution cap, aspect ratio (crop / pad / DAR tag / stretch), flip, trim, audio re-encode or copy, subtitles
   (copy / SRT / none / mux afterwards), audio-only mode
 - Rate control: constant quality (CRF) or a target average bitrate, with optional 2-pass for `libx265`

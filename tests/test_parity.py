@@ -232,6 +232,18 @@ console.log(JSON.stringify(cases.map(([w, h, cap]) => {
         for w_s, d_s in zip(job["history"], live.history):
             self.assertEqual({k: w_s[k] for k in keys}, {k: d_s[k] for k in keys})
 
+    def test_default_container_matches_desktop(self):
+        """The container proposed for a file (the source's own) is the same rule on both sides."""
+        if not shutil.which("node"):
+            self.skipTest("node not available")
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        start = html.index("function containerForSource")
+        end = html.index("function setContainerFromSource")
+        names = ["a.mkv", "a.MKV", "a.mp4", "a.m4v", "a.mov", "a.avi", "a.ts", "a.webm", "noext", "dir/film.2021.mp4"]
+        js = html[start:end] + f"console.log(JSON.stringify({json.dumps(names)}.map(containerForSource)));"
+        out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out, [self.desk.contenitore_predefinito(Path(n)) for n in names])
+
     def test_predict_bitrate_helpers_match_desktop(self):
         import random
         for seed in range(20):

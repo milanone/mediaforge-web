@@ -1429,12 +1429,19 @@ def parse_rate(text):
         return None
 
 
+_fps_cache = {}   # (path, mtime, size) -> answer: the page asks by itself when a file is selected, measure once
+
+
 @app.route("/api/detect_fps")
 def detect_fps():
     """Stima i fotogrammi realmente distinti (senza ripetizioni) su alcuni spezzoni."""
     src = resolve_bin_path(request.args.get("path", ""), request.args.get("source", "library"))
     if not src.exists():
         return jsonify({"error": "file not found"}), 404
+    st = src.stat()
+    cache_key = (str(src), st.st_mtime_ns, st.st_size)
+    if cache_key in _fps_cache:
+        return jsonify(_fps_cache[cache_key])
     probe = ffprobe_json(src)
     video = next((s for s in probe.get("streams", []) if s.get("codec_type") == "video"), None)
     if not video:
@@ -1469,13 +1476,17 @@ def detect_fps():
     if suggestion and ntsc and suggestion in ("24", "30", "60"):
         suggestion = {"24": "24000/1001", "30": "30000/1001", "60": "60000/1001"}[suggestion]
     no_dups = effective >= declared * 0.93
-    return jsonify({
+    answer = {
         "declared": declared, "effective": round(effective, 2),
         "per_window": [round(v, 2) for v in values],
         "duplicates_pct": 0 if no_dups else round((1 - effective / declared) * 100),
         "suggestion": "" if no_dups else suggestion,
         "irregular": (not no_dups) and suggestion is None,
-    })
+    }
+    if len(_fps_cache) >= 50:
+        _fps_cache.pop(next(iter(_fps_cache)))
+    _fps_cache[cache_key] = answer
+    return jsonify(answer)
 
 
 @app.route("/api/preview", methods=["POST"])

@@ -182,7 +182,7 @@
       <details class="charts" id="chartsBox" hidden open>
         <summary>Andamento della codifica</summary>
         <div class="chart-box"><div class="chart-title"><span>Velocità di codifica (fotogrammi al secondo)</span><b id="chartFpsNow"></b></div><canvas id="chartFps"></canvas></div>
-        <div class="chart-box"><div class="chart-title"><span>Velocità rispetto al tempo reale (x)</span><b id="chartSpeedNow"></b></div><canvas id="chartSpeed"></canvas></div>
+        <div class="chart-box"><div class="chart-title"><span>Velocità rispetto al tempo reale (1× = tempo reale)</span><b id="chartSpeedNow"></b></div><canvas id="chartSpeed"></canvas></div>
         <div class="chart-box"><div class="chart-title"><span><span id="chartBitrateTitle">Bitrate del video (kb/s)</span>: <i style="color:var(--accent)">istantaneo</i> · <i>medio</i></span><b id="chartBitrateNow"></b></div><canvas id="chartBitrate"></canvas></div>
       </details>
       <div class="log" id="log"></div>
@@ -228,6 +228,12 @@
 
     <div class="selected-file" id="selectedFile"></div>
     <div class="file-info" id="fileInfo"></div>
+    <!-- Real frame rate, measured by itself when the file is selected (autoCheckFps): a warning, nothing is changed -->
+    <div class="file-info" id="fpsAutoNote"></div>
+    <div class="warn-box" id="fpsAutoBox" hidden>
+      <span id="fpsAutoText"></span>
+      <button type="button" id="fpsAutoBtn" onclick="applyFpsSuggestion()"></button>
+    </div>
     <video id="sourcePreview" class="video-preview" controls hidden></video>
 
     <div class="streams-box" id="streamsBox" hidden>
@@ -738,11 +744,68 @@ async function detectFps() {
       msg.textContent = `Il file dichiara ${dec} fps ma ne ha circa ${eff} reali (${d.duplicates_pct}% di fotogrammi ripetuti). FPS impostato a ${opt ? opt.textContent : d.suggestion}.`;
     }
     schedulePreview();
+    document.getElementById('fpsAutoBox').hidden = true;   // answered by hand: the automatic warning is moot
   } catch (e) {
     msg.textContent = 'Errore di rete durante la verifica.';
   } finally {
     btn.disabled = false;
   }
+}
+
+// The same measurement as the button above, started by itself when a file is selected, so a film stored with
+// repeated frames (24 fps at 30) is flagged at once. It only warns: the user decides with the button.
+let fpsAutoToken = 0, fpsAutoSuggestion = null;
+async function autoCheckFps() {
+  const tok = ++fpsAutoToken;
+  const box = document.getElementById('fpsAutoBox'), note = document.getElementById('fpsAutoNote');
+  box.hidden = true; note.textContent = ''; fpsAutoSuggestion = null;
+  if (!selected || !probeData || !probeData.video) return;
+  const sel = selected;
+  note.textContent = 'Verifica degli fps reali in corso…';
+  try {
+    const res = await fetch('/api/detect_fps?source=' + sel.source + '&path=' + encodeURIComponent(sel.path));
+    const d = await res.json();
+    if (tok !== fpsAutoToken) return;                       // another file was selected meanwhile
+    note.textContent = '';
+    if (d.error) { note.textContent = 'Fps reali: verifica non possibile (' + d.error + ').'; return; }
+    const dec = d.declared.toFixed(2), eff = d.effective.toFixed(1);
+    const text = document.getElementById('fpsAutoText'), btn = document.getElementById('fpsAutoBtn');
+    if (d.irregular) {
+      text.textContent = `⚠ Il file dichiara ${dec} fps ma i fotogrammi distinti sono circa ${eff} al secondo, non un valore standard.`;
+      btn.hidden = true; box.hidden = false;
+    } else if (d.suggestion && document.getElementById('fps').value === d.suggestion) {
+      note.textContent = `Il file dichiara ${dec} fps ma ne ha circa ${eff} reali: il limite FPS è già impostato a ${d.suggestion}.`;
+    } else if (d.suggestion) {
+      const opt = [...document.getElementById('fps').options].find(o => o.value === d.suggestion);
+      fpsAutoSuggestion = d.suggestion;
+      text.textContent = `⚠ Il file dichiara ${dec} fps ma ne ha circa ${eff} reali (${d.duplicates_pct}% di fotogrammi ripetuti): ` +
+        'codificando alla frequenza dichiarata i duplicati restano.';
+      btn.textContent = 'Imposta FPS a ' + (opt ? opt.textContent : d.suggestion);
+      btn.hidden = !opt; box.hidden = false;
+    } else {
+      note.textContent = `Fps reali verificati: ${dec} dichiarati, nessun fotogramma ripetuto.`;
+    }
+  } catch (e) {
+    if (tok === fpsAutoToken) note.textContent = '';
+  }
+}
+// Default output container = the container of the source (mkv -> mkv, mp4/m4v/mov -> mp4); anything else (avi, ts,
+// webm...) -> mkv, which takes every stream. Same rule as the desktop (contenitore_predefinito). Applied each time a
+// file is selected; the user can still change it before converting.
+function containerForSource(path) {
+  const ext = (String(path).split('.').pop() || '').toLowerCase();
+  return ['mp4', 'm4v', 'mov'].includes(ext) ? 'mp4' : 'mkv';
+}
+function setContainerFromSource() {
+  if (selected) document.getElementById('container').value = containerForSource(selected.path);
+}
+function applyFpsSuggestion() {
+  if (!fpsAutoSuggestion) return;
+  const sel = document.getElementById('fps');
+  sel.value = fpsAutoSuggestion;
+  schedulePreview();
+  document.getElementById('fpsAutoBox').hidden = true;
+  document.getElementById('fpsAutoNote').textContent = 'FPS impostato a ' + sel.options[sel.selectedIndex].textContent + '.';
 }
 
 // ---- Prevedi bitrate: codifica alcuni spezzoni con le impostazioni attuali (/api/predict) ----
@@ -875,8 +938,10 @@ async function loadProbe() {
   if (!data.subtitles.length) subBox.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">nessuno</span>';
   document.getElementById('streamsBox').hidden = false;
 
+  setContainerFromSource();
   updateQualityAuto();
   schedulePreview();
+  autoCheckFps();
 }
 
 // CRF di default in base alla risoluzione (scala 1=max qualità...51=min).
