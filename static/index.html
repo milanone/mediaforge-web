@@ -310,8 +310,8 @@
       <div class="field" id="predictBox" style="grid-column:1 / -1">
         <label>Prevedi bitrate — codifiche di prova con le impostazioni attuali (solo qualità costante)</label>
         <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px">
-          <input type="number" id="predN" min="1" max="20" value="3" style="width:64px"> spezzoni da
-          <input type="number" id="predMin" min="0.1" max="10" step="0.1" value="1" style="width:72px"> min
+          <input type="number" id="predN" min="1" max="20" value="10" style="width:64px"> spezzoni da
+          <input type="number" id="predMin" min="0.1" max="10" step="0.1" value="0.5" style="width:72px"> min
           <label style="display:inline-block"><input type="radio" name="predMode" value="random" checked
                  onchange="onPredictModeChange()"> Punti casuali</label>
           <label style="display:inline-block"><input type="radio" name="predMode" value="selected"
@@ -845,8 +845,8 @@ function fmtClock(s) {
 async function newPredictPoints() {
   if (!selected) return;
   const msg = document.getElementById('predictMsg');
-  const n = parseInt(document.getElementById('predN').value) || 3;
-  const clip = parseFloat(document.getElementById('predMin').value) || 1;
+  const n = parseInt(document.getElementById('predN').value) || 10;
+  const clip = parseFloat(document.getElementById('predMin').value) || 0.5;
   try {
     const res = await fetch(`/api/predict_points?source=${selected.source}&path=${encodeURIComponent(selected.path)}&n=${n}&clip_min=${clip}`);
     const d = await res.json();
@@ -868,8 +868,8 @@ async function predictBitrate() {
   }
   if (!selected) return;
   const opts = collectOpts();
-  opts.n = parseInt(document.getElementById('predN').value) || 3;
-  opts.clip_min = parseFloat(document.getElementById('predMin').value) || 1;
+  opts.n = parseInt(document.getElementById('predN').value) || 10;
+  opts.clip_min = parseFloat(document.getElementById('predMin').value) || 0.5;
   opts.times = document.querySelector('input[name="predMode"]:checked').value === 'selected'
     ? document.getElementById('predTimes').value : '';
   btn.disabled = true; msg.textContent = 'Avvio…';
@@ -1309,27 +1309,36 @@ function renderStats(data) {
 }
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
 // one tiny line chart on a canvas: series = [{key, color, width}], x = elapsed time of the job
+// The samples the live charts draw (same rule as the desktop, live_chart_points): only the latest pass or retry (a
+// 2-pass encode runs the film twice, the second is the one that counts), without its first sample, which is taken while
+// the encoder starts up (fps, speed, bitrate far from the steady values) and squashes the rest of the chart; and only
+// samples that have a film time, which is the x axis.
+function liveChartPoints(series) {
+  if (!series.length) return [];
+  const last = series[series.length - 1].pass;
+  return series.filter(p => p.pass === last).slice(1).filter(p => p.time_s != null);
+}
 function drawChart(canvasId, nowId, series, unit, decimals) {
   const cv = document.getElementById(canvasId), dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, hgt = cv.clientHeight;
   if (!w) return;
   cv.width = w * dpr; cv.height = hgt * dpr;
   const g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, hgt);
-  // the first sample of every pass is taken while the encoder starts up (fps, speed, bitrate far from the steady
-  // values) and squashes the rest of the chart: not drawn (same rule as the desktop, live_chart_points)
-  const pts = histSeries.filter((p, i) => i > 0 && p.pass === histSeries[i - 1].pass);
+  const pts = liveChartPoints(histSeries);
   const vals = [];
   series.forEach(s => pts.forEach(p => { if (p[s.key] != null) vals.push(p[s.key]); }));
   if (pts.length < 2 || !vals.length) return;
   let lo = Math.min(...vals), hi = Math.max(...vals);
   if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
   const pad = (hi - lo) * 0.1; lo = Math.max(0, lo - pad); hi += pad;
-  const x0 = pts[0].t, x1 = pts[pts.length - 1].t || 1, L = 38, R = 6, T = 6, B = 18;
+  // x axis = position in the film (the time= of ffmpeg), from 0: NOT the time the encode has been running, which is
+  // shorter by the encoding speed (a film of 1:23:05 encoded in 17 minutes shows 1:23:05, not 17:12)
+  const x0 = 0, x1 = Math.max(pts[pts.length - 1].time_s, 1), L = 38, R = 6, T = 6, B = 18;
   const X = t => L + (t - x0) / Math.max(1e-9, x1 - x0) * (w - L - R);
   const Y = v => T + (1 - (v - lo) / (hi - lo)) * (hgt - T - B);
   g.font = '10px sans-serif'; g.fillStyle = cssVar('--muted'); g.strokeStyle = cssVar('--border'); g.lineWidth = 1;
   [lo, (lo + hi) / 2, hi].forEach(v => { g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(w - R, Y(v)); g.stroke(); g.fillText(v.toFixed(decimals), 2, Y(v) + 3); });
-  // time axis: elapsed time since the job started (h:mm:ss)
+  // time axis: position in the film (h:mm:ss)
   for (let i = 0; i <= 5; i++) {
     const t = x0 + (x1 - x0) * i / 5, x = X(t);
     g.beginPath(); g.moveTo(x, hgt - B); g.lineTo(x, hgt - B + 3); g.stroke();
@@ -1337,11 +1346,10 @@ function drawChart(canvasId, nowId, series, unit, decimals) {
     g.fillText(fmtClock(t), x, hgt - 4);
   }
   g.textAlign = 'left';
-  pts.forEach((p, i) => { if (i && p.pass !== pts[i - 1].pass) { g.beginPath(); g.setLineDash([3, 3]); g.moveTo(X(p.t), T); g.lineTo(X(p.t), hgt - B); g.stroke(); g.setLineDash([]); } });
   series.forEach(s => {
     g.strokeStyle = cssVar(s.color); g.lineWidth = s.width; g.beginPath();
     let started = false;
-    pts.forEach(p => { if (p[s.key] == null) return; const x = X(p.t), y = Y(p[s.key]); if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; } });
+    pts.forEach(p => { if (p[s.key] == null) return; const x = X(p.time_s), y = Y(p[s.key]); if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; } });
     g.stroke();
   });
   const mainKey = series[0].key, mv = pts.map(p => p[mainKey]).filter(v => v != null);

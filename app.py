@@ -1106,6 +1106,8 @@ def run_encode(job_id, src_path: Path, dst_path: Path, opts: dict, probe: dict):
 # MediaForge.pyw: predict_start_times / parse_start_times / summarize_bitrates / predict_bitrate)
 # ---------------------------------------------------------------------------
 PREDICT_MAX_CLIPS = 20   # same as the desktop app; the clip length can go down to 0.1 min
+PREDICT_DEFAULT_CLIPS = 10        # proposed by default (2026-11-15), as in the desktop app: 10 clips of 0.5 min
+PREDICT_DEFAULT_CLIP_MIN = 0.5
 PREDICT_EDGE = 0.05 # random clips stay inside 5%..95% of the film (no opening titles / end credits)
 
 
@@ -1728,8 +1730,8 @@ def predict():
     if not video or not duration:
         return jsonify({"error": "nessun flusso video o durata non leggibile"}), 400
     try:
-        n = int(data.get("n", 3))
-        clip_sec = float(data.get("clip_min", 1)) * 60
+        n = int(data.get("n", PREDICT_DEFAULT_CLIPS))
+        clip_sec = float(data.get("clip_min", PREDICT_DEFAULT_CLIP_MIN)) * 60
         if not 1 <= n <= PREDICT_MAX_CLIPS or clip_sec <= 0:
             raise ValueError
     except (TypeError, ValueError):
@@ -1763,8 +1765,8 @@ def predict_points():
         return jsonify({"error": "file not found"}), 404
     _, _, _, duration = simplify_streams(ffprobe_json(src_path))
     try:
-        n = int(request.args.get("n", 3))
-        clip_sec = float(request.args.get("clip_min", 1)) * 60
+        n = int(request.args.get("n", PREDICT_DEFAULT_CLIPS))
+        clip_sec = float(request.args.get("clip_min", PREDICT_DEFAULT_CLIP_MIN)) * 60
         if not duration or not 1 <= n <= PREDICT_MAX_CLIPS or clip_sec <= 0:
             raise ValueError
     except (TypeError, ValueError):

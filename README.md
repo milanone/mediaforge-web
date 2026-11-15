@@ -19,7 +19,7 @@ encoding rules, different plumbing (files on the server, jobs in the background,
 - Default CRF follows the output resolution (480p=14, 720p=16, 1080p=18, 4K=20); a 4K source scaled down gets CRF 14
   (the detailed scenes lose most of their fine detail at higher values). Lowered by 2 on 2026-11-11: a 4K film kept at 4K
   came out at only 2700 kbps with CRF 22. Only the 4K points rest on real results; the lower resolutions follow the same shift
-- "Prevedi bitrate": encodes a few short clips (default 3 of 1 minute; up to 20 clips, as short as 0.1 min; random or chosen
+- "Prevedi bitrate": encodes a few short clips (default 10 of 0.5 minutes; up to 20 clips, as short as 0.1 min; random or chosen
   times, with a button that draws a new set of random points) with the current settings and shows the bitrate of each,
   mean/min/max and the predicted video size; an estimate, not a promise. One run on a 4K series with 20 clips of 0.2 min gave
   2300 and 2400 kbps against about 2100 for the full encode: stable, but about 10-14% high
@@ -28,7 +28,7 @@ encoding rules, different plumbing (files on the server, jobs in the background,
   bitrate, preset, resolution cap, audio, subtitles, trim, container), progress bar, live charts, log and the buttons to
   stop it. When it ends the card keeps the result and a "Nuova conversione" button brings the library and the options back
 - Live charts while encoding: encoding speed (fps), speed against real time and the video bitrate (instantaneous over the last
-  ~20 s, and average), with the elapsed time on the x axis. ffmpeg reports the bitrate of the whole file, so the audio is
+  ~20 s, and average), with the position in the film on the x axis (a film of 1:23:05 shows 1:23:05, however long the encode takes). ffmpeg reports the bitrate of the whole file, so the audio is
   subtracted (a re-encoded track counts its new bitrate, e.g. AC-3 640 -> 384 counts 384; exact for constant-bitrate audio,
   an estimate for TrueHD/FLAC/DTS-HD). The first sample of each pass, taken while the encoder starts up, is not drawn
 - After each encode: a chart of the exact video bitrate over time (from the packet sizes of the finished file; 30 s to 5 min steps,

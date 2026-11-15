@@ -232,6 +232,25 @@ console.log(JSON.stringify(cases.map(([w, h, cap]) => {
         for w_s, d_s in zip(job["history"], live.history):
             self.assertEqual({k: w_s[k] for k in keys}, {k: d_s[k] for k in keys})
 
+    def test_live_chart_points_match_desktop(self):
+        """Which samples the live charts draw (latest pass, without its first sample, only with a film time) is the same
+        rule on both sides; the x axis is the position in the film."""
+        if not shutil.which("node"):
+            self.skipTest("node not available")
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        start = html.index("function liveChartPoints")
+        end = html.index("function drawChart")
+        cases = [
+            [],
+            [{"pass": 1, "t": 0, "time_s": 5.0}],
+            [{"pass": 1, "t": 0, "time_s": 5.0}, {"pass": 1, "t": 10, "time_s": 50.0}, {"pass": 1, "t": 20, "time_s": 95.0}],
+            [{"pass": 1, "t": 0, "time_s": 5.0}, {"pass": 1, "t": 10, "time_s": 50.0}, {"pass": 2, "t": 20, "time_s": 4.0},
+             {"pass": 2, "t": 30, "time_s": None}, {"pass": 2, "t": 40, "time_s": 48.0}, {"pass": 2, "t": 50, "time_s": 90.0}],
+        ]
+        js = html[start:end] + f"console.log(JSON.stringify({json.dumps(cases)}.map(c => liveChartPoints(c).map(p => p.t))));"
+        out = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out, [[p["t"] for p in self.desk.live_chart_points(c)] for c in cases])
+
     def test_fps_ratio_rule_matches_desktop(self):
         """Repeats in a whole ratio can be dropped, any other ratio is left alone: same rule on both sides."""
         for d, real in ((60, 30), (50, 25), (59.94, 29.97), (120, 30), (30, 24), (29.97, 23.976), (25, 24), (60, 24),
