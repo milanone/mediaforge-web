@@ -41,6 +41,16 @@ while a conversion runs: it just tries again the next night; log in `updates/aut
 `update-watcher.sh` for the in-page "Aggiorna ora" button is NOT installed (polling every minute was rejected), so
 that button stays hidden and the banner shows the manual command.
 
+Second installation, on `ispale` (2026-11-19): `/home/francesco/docker/mediaforge-web` is also a clone of this repo (before it was
+a plain folder of 2026-10-05; the old one is in `mediaforge-web.bak-20261119`, the old image is tagged `mediaforge-web:ispale-oct5`).
+The server settings are not the ones of `docker-compose.yaml` (which is gaia's), so they live in `docker-compose.override.yaml`,
+loaded by Compose by itself and listed in `.git/info/exclude`, never committed: port only on `127.0.0.1:5050` (the app has no login:
+open it with an SSH tunnel; the home page of ispale shows it behind its own password), the single library `~/mediaforge-library`
+mounted at `/library` read-write (the output goes next to the source), `/data/output` = `~/mediaforge-library/output`, runs as root.
+It uses `!override` for `ports` and `volumes`, because Compose would otherwise add them to gaia's. Update by hand, there is no cron:
+`ssh ispale "cd /home/francesco/docker/mediaforge-web && ./deploy.sh"`. Do not copy gaia's compose over it: it would publish the
+port to the network and mount folders that do not exist there.
+
 Live numbers and charts: `parse_progress_line()` reads ffmpeg's progress line (`frame= fps= q= size= time= bitrate= speed=`) in
 `run_ffmpeg_watchdog`; the latest values go to `job["stats"]` and every 10 s a sample to `job["history"]` (instantaneous bitrate
 over the last ~20 s, since ffmpeg's `bitrate` is the average since the start; `pass` tells 2-pass runs apart). Progress lines no
